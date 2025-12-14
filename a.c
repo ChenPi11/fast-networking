@@ -13,8 +13,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#if defined(__linux__) /* Only on Linux. */
 #undef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200112L
+#endif
 #undef _BSD_SOURCE
 #define _BSD_SOURCE 1
 #undef _DEFAULT_SOURCE
@@ -52,7 +54,6 @@
 #include <string.h>
 #include <time.h>
 
-#include <alloca.h>
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -128,15 +129,6 @@ typedef unsigned int UTIL_Bool;
 
 /* Minimum of A and B. */
 #define UTIL_min(a, b) ((a) < (b) ? (a) : (b))
-
-/* Allocate memory on the stack of size N. If alloca is not supported, use malloc. */
-#define UTIL_alloca(size) alloca(size)
-
-/* Free memory allocated by UTIL_alloca. To avoid leak when alloca is not supported. */
-#define UTIL_free_alloca(ptr)                                                                                          \
-    do                                                                                                                 \
-    {                                                                                                                  \
-    } while (0)
 
 /* Maximum signed value for type of size N (e.g. UTIL_MAX_SIGNED_VALUE(4) is
    2147483647 for int32_t). */
@@ -821,19 +813,19 @@ int FMT_format(char **buffer, const char *fmt, ...)
 /* A string:any map node. */
 struct MAP_Node
 {
-    char *key;            /* Malloc-allocated string key. */
-    void *value;          /* Malloc-allocated value. */
+    char *key;             /* Malloc-allocated string key. */
+    void *value;           /* Malloc-allocated value. */
     struct MAP_Node *next; /* Next node in bucket (linked list for collision resolution). */
-    uint16_t hash;        /* Cached hash value to avoid recomputation. */
+    uint16_t hash;         /* Cached hash value to avoid recomputation. */
 };
 
 /* A string:any map. */
 struct MAP_Map
 {
     struct MAP_Node **buckets; /* Array of buckets. */
-    uint16_t capacity;        /* Capacity (2^capacity_power). */
-    uint16_t size;            /* Current number of elements. */
-    uint16_t capacity_power;  /* Exponent of capacity (capacity = 1 << capacity_power). */
+    uint16_t capacity;         /* Capacity (2^capacity_power). */
+    uint16_t size;             /* Current number of elements. */
+    uint16_t capacity_power;   /* Exponent of capacity (capacity = 1 << capacity_power). */
 };
 
 /* Create a new MAP_Map to MAP with initial capacity 2^INIT_CAPACITY_POWER. Notice that INIT_CAPACITY_POWER must be in
@@ -1152,7 +1144,7 @@ void MAP_free(struct MAP_Map *map)
 struct MAP_MapIterator
 {
     const struct MAP_Map *map; /* The map to iterate over. */
-    uint16_t bucket_index;    /* The current bucket index. */
+    uint16_t bucket_index;     /* The current bucket index. */
     struct MAP_Node *current;  /* The current node. */
 };
 
@@ -1660,7 +1652,7 @@ int NET_repr_inet_addr(const struct NET_InetAddr *addr, char *out_buf, size_t ou
 
 /* Receive data from a socket SK, storing the source address and port in SRC_ADDR and SRC_PORT. */
 UTIL_SignedSize NET_recvfrom(NET_Socket sock, void *buf, size_t len, int flags, struct NET_InetAddr *src_addr,
-                            uint16_t *src_port)
+                             uint16_t *src_port)
 {
     UTIL_SignedSize ret;
     UTIL_SignedSize received;
@@ -1697,8 +1689,8 @@ UTIL_SignedSize NET_recvfrom(NET_Socket sock, void *buf, size_t len, int flags, 
 }
 
 /* Send data to the specified destination address and port. */
-UTIL_SignedSize NET_sendto(NET_Socket sock, const void *buf, size_t len, int flags, const struct NET_InetAddr *dest_addr,
-                          uint16_t dest_port)
+UTIL_SignedSize NET_sendto(NET_Socket sock, const void *buf, size_t len, int flags,
+                           const struct NET_InetAddr *dest_addr, uint16_t dest_port)
 {
     UTIL_SignedSize ret;
     struct sockaddr_storage addr;
@@ -2423,7 +2415,7 @@ static int DNS__reply_query4(NET_Socket sk, const struct NET_InetAddr *src_addr,
         goto EXIT;
     }
 
-    out_buf = UTIL_alloca(out_buf_len);
+    out_buf = malloc(out_buf_len);
     if (out_buf == NULL)
     {
         ret = -ENOMEM;
@@ -2445,7 +2437,7 @@ static int DNS__reply_query4(NET_Socket sk, const struct NET_InetAddr *src_addr,
 
 EXIT:
     DNS_free_resource_record(&rr);
-    UTIL_free_alloca(out_buf);
+    free(out_buf);
     return ret;
 }
 
@@ -2475,7 +2467,7 @@ static int DNS__reply_query6(NET_Socket sk, const struct NET_InetAddr *src_addr,
         goto EXIT;
     }
 
-    out_buf = UTIL_alloca(out_buf_len);
+    out_buf = malloc(out_buf_len);
     if (out_buf == NULL)
     {
         ret = -ENOMEM;
@@ -2497,7 +2489,7 @@ static int DNS__reply_query6(NET_Socket sk, const struct NET_InetAddr *src_addr,
 
 EXIT:
     DNS_free_resource_record(&rr);
-    UTIL_free_alloca(out_buf);
+    free(out_buf);
     return ret;
 }
 
@@ -2564,7 +2556,7 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
     if (out_buf_len > 512)
         return -ENOSPC;
 
-    out_buf = UTIL_alloca(out_buf_len);
+    out_buf = malloc(out_buf_len);
     if (!out_buf)
         return -ENOMEM;
 
@@ -2625,7 +2617,7 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
     ret = 0;
 
 EXIT:
-    UTIL_free_alloca(out_buf);
+    free(out_buf);
     return ret;
 }
 
@@ -3083,7 +3075,6 @@ int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t
 
 EXIT:
     free(buf);
-    UTIL_free_alloca(addr);
     return ret;
 }
 
