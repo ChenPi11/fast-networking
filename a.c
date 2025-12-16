@@ -54,6 +54,22 @@
 #include <string.h>
 #include <time.h>
 
+#if defined(_WIN32) || defined(_WIN64)
+#define HAS_WINDOWS 1
+#endif
+
+#if defined(__unix) || defined(__unix__) || defined(unix)
+#define HAS_UNIX 1
+#endif
+
+#if defined(__STDC_LIB_EXT1__) || (_MSC_VER >= 1600)
+#define HAS_SAFE_C_LIB 1
+#endif
+
+#if HAS_WINDOWS
+#include <Windows.h>
+#include <winsock.h>
+#else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -62,6 +78,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #ifndef va_copy
 /* Prefer compiler provided forms first. */
@@ -86,36 +103,7 @@
 #endif
 #endif
 
-#pragma region exc
-
-/* System exception. Use GetLastError on Windows. */
-#define EXC_ENTRY_SYS 0
-/* Network exception. Use WSAGetLastError on Windows. */
-#define EXC_ENTRY_SYSNET 1
-/* Libc exception. */
-#define EXC_ENTRY_LIBC 2
-
-/* Convert libc error code to exception code. */
-#define EXC_convert_libc_error(libc_err) libc_err
-
-/* Get last exception code. */
-#define EXC_get_last_error(entry) errno
-
-/* Clear last exception code. */
-#define EXC_clear_last_error(entry)                                                                                    \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        errno = 0;                                                                                                     \
-    } while (0)
-
-/* Set last exception code. */
-#define EXC_set_last_error(entry, exc_code)                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        errno = (exc_code);                                                                                            \
-    } while (0)
-
-#pragma region utils
+#pragma region util types
 
 /* Boolean type. */
 typedef unsigned int UTIL_Bool;
@@ -134,11 +122,170 @@ typedef unsigned int UTIL_Bool;
    2147483647 for int32_t). */
 #define UTIL_MAX_SIGNED_VALUE(x) ((int64_t)(((uint64_t)1 << ((x) * 8 - 1)) - 1))
 
+#if HAS_WINDOWS
+/* Signed size type. */
+typedef ptrdiff_t UTIL_SignedSize;
+#else
 /* Signed size type. */
 typedef ssize_t UTIL_SignedSize;
+#endif
 
 /* Maximum value for UTIL_SignedSize. */
 #define UTIL_SSIZE_MAX UTIL_MAX_SIGNED_VALUE(sizeof(UTIL_SignedSize))
+
+#pragma region exception
+
+/* Exception error categories. */
+enum EXC_ErrrorCategory
+{
+    /* Libc error category. */
+    EXC_CATEGORY_LIBC = 0,
+    /* System error category. */
+    EXC_CATEGORY_SYS,
+    /* Network error category. */
+    EXC_CATEGORY_NET,
+    /* Error category for this program. */
+    EXC_CATEGORY_FN
+};
+
+#define EFN_MAX_CAPACITY_EXCEEDED 1 /* Capacity exceeded. */
+
+/* Exception error code. */
+struct EXC_ErrorCode
+{
+    /* Error code. */
+    int code;
+    /* Error category. */
+    enum EXC_ErrrorCategory category;
+};
+
+#if HAS_WINDOWS
+/* Get last exception code with CATEGORY. */
+struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
+{
+    struct EXC_ErrorCode error;
+
+    error.code = 0;
+    error.category = category;
+
+    switch (category)
+    {
+    case EXC_CATEGORY_LIBC:
+        error.code = errno;
+        break;
+    case EXC_CATEGORY_SYS:
+        error.code = (int)GetLastError();
+        break;
+    case EXC_CATEGORY_NET:
+        error.code = (int)WSAGetLastError();
+        break;
+    default:
+        break;
+    }
+
+    return error;
+}
+#else
+/* Get last exception code with CATEGORY. */
+struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
+{
+    struct EXC_ErrorCode error;
+
+    error.code = errno;
+    error.category = category;
+
+    return error;
+}
+#endif
+
+#if HAS_WINDOWS
+/* Clear last exception code with CATEGORY. */
+void EXC_clear_last_error(enum EXC_ErrrorCategory category)
+{
+    switch (category)
+    {
+    case EXC_CATEGORY_LIBC:
+        errno = 0;
+        break;
+    case EXC_CATEGORY_SYS:
+        SetLastError(0);
+        break;
+    case EXC_CATEGORY_NET:
+        WSASetLastError(0);
+        break;
+    default:
+        break;
+    }
+}
+#else
+/* Clear last exception code with CATEGORY. */
+#define EXC_clear_last_error(category)                                                                                 \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        errno = 0;                                                                                                     \
+    } while (0)
+#endif
+
+#pragma region result
+
+/* A generic result type definition utility. */
+#define RESULT_GENERIC(ResultType)                                                                                     \
+    typedef struct RESULT_Tag_##ResultType                                                                             \
+    {                                                                                                                  \
+        UTIL_Bool has_value;                                                                                           \
+        union {                                                                                                        \
+            struct EXC_ErrorCode error;                                                                                \
+            ResultType value;                                                                                          \
+        } result;                                                                                                      \
+    } RESULT_##ResultType;                                                                                             \
+    RESULT_##ResultType RESULT_error_##ResultType(struct EXC_ErrorCode error_code)                                     \
+    {                                                                                                                  \
+        RESULT_##ResultType res;                                                                                       \
+        res.has_value = UTIL_FALSE;                                                                                    \
+        res.result.error = error_code;                                                                                 \
+        return res;                                                                                                    \
+    }                                                                                                                  \
+    RESULT_##ResultType RESULT_ok_##ResultType(ResultType value)                                                       \
+    {                                                                                                                  \
+        RESULT_##ResultType res;                                                                                       \
+        res.has_value = UTIL_TRUE;                                                                                     \
+        res.result.value = value;                                                                                      \
+        return res;                                                                                                    \
+    }
+
+/* Result type for void. */
+typedef struct RESULT_Tag_void
+{
+    UTIL_Bool has_value;
+    struct EXC_ErrorCode error;
+} RESULT_void;
+
+/* Create an error result of type void with ERROR_CODE. */
+#define RESULT_error_void(error_code)                                                                                  \
+    (RESULT_void)                                                                                                      \
+    {                                                                                                                  \
+        UTIL_FALSE, error_code                                                                                         \
+    }
+
+/* Create a success result of type void. */
+#define RESULT_ok_void()                                                                                               \
+    (RESULT_void)                                                                                                      \
+    {                                                                                                                  \
+        UTIL_TRUE, {0, 0}                                                                                              \
+    }
+
+/* Return a void result with error code from last exception. */
+#define RESULT_ERRNO_void(category) RESULT_error_void(EXC_get_last_error((category)))
+
+/* Return a result with error code from last exception. */
+#define RESULT_ERRNO(ResultType, category) RESULT_error_##ResultType(EXC_get_last_error(category))
+
+#pragma region types
+
+RESULT_GENERIC(UTIL_SignedSize)
+RESULT_GENERIC(uint64_t)
+
+#pragma region utils
 
 /* Duplicate memory block SRC of size N. Return NULL on error. */
 void *UTIL_memdup(const void *src, size_t n)
@@ -161,46 +308,46 @@ void *UTIL_memdup(const void *src, size_t n)
 #define UTIL_strdup(str) UTIL_memdup((str), strlen(str) + 1)
 
 /* Print formatted string to BUFFER. Return number of characters printed or negative error code. */
-UTIL_SignedSize UTIL_vsprintf(char **buffer, const char *fmt, va_list args)
+RESULT_UTIL_SignedSize UTIL_vsprintf(char **buffer, const char *fmt, va_list args)
 {
-    UTIL_SignedSize ret;
+    RESULT_UTIL_SignedSize ret;
+    UTIL_SignedSize res;
     char *tmp_buffer;
     va_list ap_len;
     va_list ap_write;
 
-    ret = 0;
+    ret = RESULT_ok_UTIL_SignedSize(0);
     tmp_buffer = NULL;
 
     if (buffer == NULL || fmt == NULL)
     {
-        ret = -EINVAL;
-        goto FAIL;
+        abort();
     }
 
     *buffer = NULL;
 
     va_copy(ap_len, args);
-    ret = (UTIL_SignedSize)vsnprintf(NULL, 0, fmt, ap_len);
+    res = (UTIL_SignedSize)vsnprintf(NULL, 0, fmt, ap_len);
     va_end(ap_len);
-    if (ret < 0)
+    if (res < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_LIBC);
+        ret = RESULT_ERRNO(UTIL_SignedSize, EXC_CATEGORY_LIBC);
         goto FAIL;
     }
 
-    tmp_buffer = malloc((size_t)ret + 1);
+    tmp_buffer = malloc((size_t)res + 1);
     if (!tmp_buffer)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_LIBC);
+        ret = RESULT_ERRNO(UTIL_SignedSize, EXC_CATEGORY_LIBC);
         goto FAIL;
     }
 
     va_copy(ap_write, args);
-    ret = vsnprintf(tmp_buffer, ret + 1, fmt, ap_write);
+    res = vsnprintf(tmp_buffer, res + 1, fmt, ap_write);
     va_end(ap_write);
-    if (ret < 0)
+    if (res < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_LIBC);
+        ret = RESULT_ERRNO(UTIL_SignedSize, EXC_CATEGORY_LIBC);
         goto FAIL;
     }
 
@@ -214,19 +361,47 @@ EXIT:
     return ret;
 }
 
-/* Get current time in milliseconds. Return (uint64_t)-1 on error. */
+#if HAS_WINDOWS
+/* Get current time in milliseconds. */
+uint64_t UTIL_get_current_time_ms()
+{
+    FILETIME ft;
+    ULARGE_INTEGER uli;
+
+    GetSystemTimeAsFileTime(&ft);
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+
+    /* Convert to milliseconds. */
+    return (uint64_t)(uli.QuadPart / 10000);
+}
+#else
+/* Get current time in milliseconds. */
 uint64_t UTIL_get_current_time_ms()
 {
     struct timespec ts;
 
+WHY_THIS_FAILS:
     if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
     {
-        return (uint64_t)-1;
+        goto WHY_THIS_FAILS;
     }
 
     return (uint64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
+#endif
 
+#if HAS_WINDOWS
+void UTIL_sleep_ms(uint64_t ms)
+{
+    if (ms == 0)
+    {
+        return;
+    }
+
+    Sleep((DWORD)ms);
+}
+#else
 /* Sleep for MS milliseconds. */
 void UTIL_sleep_ms(uint64_t ms)
 {
@@ -242,6 +417,7 @@ void UTIL_sleep_ms(uint64_t ms)
 
     nanosleep(&ts, NULL);
 }
+#endif
 
 /* Timer structure. */
 struct UTIL_Timer
@@ -292,50 +468,37 @@ struct UTIL_StrArray
     char **arr;      /* Array of strings. */
 };
 
-/* Initialize string array ARR with initial capacity of INITIAL_CAPACITY. Return 0 on success, negative error code on
-   error. */
-int UTIL_str_array_init(struct UTIL_StrArray *arr, size_t initial_capacity)
+/* Initialize string array ARR with initial capacity of INITIAL_CAPACITY. */
+RESULT_void UTIL_str_array_init(struct UTIL_StrArray *arr, size_t initial_capacity)
 {
-    int ret;
-
-    ret = 0;
-
     if (arr == NULL || initial_capacity == 0)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+        abort();
 
     arr->arr = (char **)malloc(sizeof(char *) * initial_capacity);
     if (arr->arr == NULL)
-    {
-        ret = -ENOMEM;
-        goto EXIT;
-    }
+        return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
     arr->size = 0;
     arr->capacity = initial_capacity;
 
-EXIT: /* No any heap memory allocated if ret != 0, so no need to free. */
-    return ret;
+    return RESULT_ok_void();
 }
 
-/* Append string DATA to string array ARR. Return 0 on success, negative error code on error. */
-int UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
+/* Append string DATA to string array ARR.*/
+RESULT_void UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
 {
-    int ret = 0;
     char **new_arr;
     size_t new_capacity;
 
     if (arr == NULL || data == NULL)
-        return -EINVAL;
+        abort();
 
     if (arr->size >= arr->capacity)
     {
         new_capacity = arr->capacity * 2;
         new_arr = (char **)realloc(arr->arr, sizeof(char *) * new_capacity);
         if (new_arr == NULL)
-            return -ENOMEM;
+            return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
         arr->arr = new_arr;
         arr->capacity = new_capacity;
@@ -343,10 +506,10 @@ int UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
 
     arr->arr[arr->size] = UTIL_strdup(data);
     if (arr->arr[arr->size] == NULL)
-        return -ENOMEM;
+        return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
     arr->size++;
-    return ret;
+    return RESULT_ok_void();
 }
 
 /* Check if DATA is in string array ARR. Return 1 if found, 0 if not found or on error. */
@@ -377,7 +540,7 @@ void UTIL_str_array_free(struct UTIL_StrArray *arr)
     size_t i;
 
     if (arr == NULL)
-        abort();
+        return;
 
     for (i = 0; i < arr->size; i++)
     {
@@ -398,10 +561,11 @@ void UTIL_init_crc16_table(void)
 {
     int i;
     int j;
+    uint16_t crc;
 
     for (i = 0; i < 256; ++i)
     {
-        uint16_t crc = (uint16_t)i << 8;
+        crc = (uint16_t)i << 8;
         for (j = 0; j < 8; ++j)
         {
             if (crc & 0x8000)
@@ -436,38 +600,77 @@ uint16_t UTIL_str_hash(const char *key, uint16_t table_size_2power)
 UTIL_Bool UTIL_is_file(const char *path)
 {
     FILE *file;
+#if HAS_SAFE_C_LIB
+    errno_t sc_err;
+#endif
 
     if (path == NULL)
         return UTIL_FALSE;
 
+#if HAS_SAFE_C_LIB
+    sc_err = fopen_s(&file, path, "r");
+    if (sc_err != 0)
+        return UTIL_FALSE;
+#else
     file = fopen(path, "r");
     if (file == NULL)
         return UTIL_FALSE;
+#endif
 
     fclose(file);
     return UTIL_TRUE;
 }
 
-/* Convert string STR to unsigned base 10 integer. Return the integer on success, negative error code on error. */
-UTIL_SignedSize UTIL_str_to_unsigned_base10(const char *str)
+/* Maximum value for uint64_t divided by 10. */
+#define UINT64_MAX_DIV10 UINT64_MAX / 10
+
+/* Convert string STR to unsigned base 10 integer. */
+RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
 {
-    char *endptr;
-    unsigned long val;
+    uint64_t result;
+    int digit;
 
     if (str == NULL)
-        return -EINVAL;
+        abort();
 
-    EXC_clear_last_error(EXC_ENTRY_LIBC);
-    val = 0;
+    result = 0;
 
-    val = strtoul(str, &endptr, 10);
-    if (EXC_get_last_error(EXC_ENTRY_LIBC) != 0 || endptr == str || *endptr != '\0' ||
-        val > (unsigned long)UTIL_SSIZE_MAX)
+    // Skip leading whitespace.
+    while (isspace((unsigned char)*str))
     {
-        return -EXC_get_last_error(EXC_ENTRY_LIBC);
+        str++;
     }
 
-    return (UTIL_SignedSize)val;
+    if (*str == '\0')
+    {
+        // Empty string or only whitespace.
+        return RESULT_error_uint64_t((struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC});
+    }
+
+    while (*str)
+    {
+        if (!isdigit((unsigned char)*str))
+        {
+            // Encountered non-digit character, return failure.
+            return RESULT_error_uint64_t((struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC});
+        }
+
+        digit = *str - '0'; // Convert character to digit.
+
+        // Check for overflow.
+        if (result > UINT64_MAX_DIV10 || (result == UINT64_MAX_DIV10 && digit > 7))
+        {
+            // Overflow case.
+            return RESULT_error_uint64_t((struct EXC_ErrorCode){ERANGE, EXC_CATEGORY_LIBC});
+        }
+
+        // Update result.
+        result = result * 10 + digit;
+
+        str++;
+    }
+
+    return RESULT_ok_uint64_t(result);
 }
 
 #pragma region fmt
@@ -596,9 +799,9 @@ arguments than the highest placeholder referenced. Example usage:
 The function FMT_vformat formats a string using the given format specifier and
 a va_list of arguments. The formatted string is stored in the buffer pointed to by
 BUFFER. If BUFFER is NULL, the function returns the required buffer size (including
-terminating NUL) without formatting. Returns a negative error code on error.
+terminating NUL) without formatting.
 */
-int FMT_vformat(char **buffer, const char *fmt, va_list ap)
+RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
 {
     char *buf;
     UTIL_SignedSize need;
@@ -611,8 +814,8 @@ int FMT_vformat(char **buffer, const char *fmt, va_list ap)
     size_t remaining;
     int i;
 
-    if (!fmt)
-        return -EINVAL;
+    if (fmt == NULL || buffer == NULL)
+        abort();
 
     /* Determine highest referenced index (1..9). */
     p = fmt;
@@ -682,12 +885,12 @@ int FMT_vformat(char **buffer, const char *fmt, va_list ap)
     /* Determine required size using cached args. */
     need = FMT__count_with_args(fmt, argvals, provided);
     if (need <= 0)
-        return -EINVAL;
+        return (RESULT_void){UTIL_FALSE, (struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC}};
 
     bufsize = (size_t)need;
     buf = (char *)malloc(bufsize);
     if (!buf)
-        return -ENOMEM;
+        return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
     /* Build the string into buf. */
     p = fmt;
@@ -740,6 +943,7 @@ int FMT_vformat(char **buffer, const char *fmt, va_list ap)
                     else
                     {
                         size_t litlen;
+
                         litlen = (size_t)(r - p);
                         if (litlen >= remaining)
                             goto ERR_FREE_BUF;
@@ -785,24 +989,21 @@ int FMT_vformat(char **buffer, const char *fmt, va_list ap)
         goto ERR_FREE_BUF;
     *w = '\0';
     *buffer = buf;
-    return 0;
+    return RESULT_ok_void();
 
 ERR_FREE_BUF:
     free(buf);
-    return -EINVAL;
+    return (RESULT_void){UTIL_FALSE, (struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC}};
 }
 
-/* Formats a string using the given format specifier and arguments. Stores the result in BUFFER.
-   Returns a negative error code on error. */
-int FMT_format(char **buffer, const char *fmt, ...)
+/* Formats a string using the given format specifier and arguments. Stores the result in BUFFER. */
+RESULT_void FMT_format(char **buffer, const char *fmt, ...)
 {
     va_list ap;
-    int ret;
+    RESULT_void ret;
 
     va_start(ap, fmt);
-
     ret = FMT_vformat(buffer, fmt, ap);
-
     va_end(ap);
 
     return ret;
@@ -819,6 +1020,12 @@ struct MAP_Node
     uint16_t hash;         /* Cached hash value to avoid recomputation. */
 };
 
+/* Pointer to MAP_Node. */
+typedef struct MAP_Node *MAP_NodePtr;
+
+/* Result type for MAP_NodePtr. */
+RESULT_GENERIC(MAP_NodePtr)
+
 /* A string:any map. */
 struct MAP_Map
 {
@@ -829,19 +1036,15 @@ struct MAP_Map
 };
 
 /* Create a new MAP_Map to MAP with initial capacity 2^INIT_CAPACITY_POWER. Notice that INIT_CAPACITY_POWER must be in
-   range [4, 14], and you should pre-allocate memory for the map struct. Returns 0 on success, -EINVAL if the map is
-   NULL, -ENOMEM if out of memory. */
-int MAP_create(struct MAP_Map *map, uint16_t init_capacity_power)
+   range [4, 14], and you should pre-allocate memory for the map struct. */
+RESULT_void MAP_create(struct MAP_Map *map, uint16_t init_capacity_power)
 {
-    int ret;
+    RESULT_void ret;
 
-    ret = 0;
+    ret = RESULT_ok_void();
 
     if (map == NULL)
-    {
-        ret = -EINVAL;
-        goto FAIL;
-    }
+        abort();
 
     memset(map, 0, sizeof(struct MAP_Map));
 
@@ -855,7 +1058,7 @@ int MAP_create(struct MAP_Map *map, uint16_t init_capacity_power)
     map->buckets = (struct MAP_Node **)calloc(map->capacity, sizeof(struct MAP_Node *));
     if (!map->buckets)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto FAIL;
     }
 
@@ -867,25 +1070,26 @@ FAIL:
 }
 
 /* (Internal) Resize the MAP to double its current capacity. */
-static int MAP__resize(struct MAP_Map *map)
+static RESULT_void MAP__resize(struct MAP_Map *map)
 {
-    int ret;
+    RESULT_void ret;
     uint16_t old_capacity;
     struct MAP_Node **old_buckets;
     uint16_t idx;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     old_buckets = NULL;
 
     if (map->capacity_power >= 14)
     {
-        ret = -EFBIG; /* Max capacity reached. */
+        /* Max capacity reached. */
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED);
         goto EXIT;
     }
 
     if (map->size < map->capacity)
     {
-        ret = 0; /* No need to resize. */
+        /* No need to resize. */
         goto EXIT;
     }
 
@@ -903,7 +1107,7 @@ static int MAP__resize(struct MAP_Map *map)
         map->buckets = old_buckets;
         map->capacity = old_capacity;
         map->capacity_power--;
-        ret = -ENOMEM; /* Out of memory. */
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
@@ -937,21 +1141,17 @@ EXIT:
 }
 
 /* (Internal) Create a new MAP_Node with the given KEY, VALUE, and HASH. If error, set libc error and return NULL. */
-static struct MAP_Node *MAP__create_node(char *key, void *value, uint16_t hash)
+static RESULT_MAP_NodePtr MAP__create_node(char *key, void *value, uint16_t hash)
 {
     struct MAP_Node *node;
 
     if (key == NULL || value == NULL)
-    {
-        EXC_set_last_error(EXC_ENTRY_LIBC, EINVAL);
-        return NULL;
-    }
+        abort();
 
     node = (struct MAP_Node *)malloc(sizeof(struct MAP_Node));
     if (node == NULL)
     {
-        EXC_set_last_error(EXC_ENTRY_LIBC, ENOMEM);
-        return NULL;
+        return RESULT_ERRNO(MAP_NodePtr, EXC_CATEGORY_LIBC);
     }
 
     node->key = key;
@@ -960,7 +1160,7 @@ static struct MAP_Node *MAP__create_node(char *key, void *value, uint16_t hash)
     node->hash = hash;
     node->next = NULL;
 
-    return node;
+    return RESULT_ok_MAP_NodePtr(node);
 }
 
 /* Set a key-value pair in the MAP. If the KEY already exists, update its value. Notice that the KEY and VALUE **MUST**
@@ -4411,7 +4611,7 @@ void FN_parse_arguments(int argc, char *argv[])
             if (opt + 1 < argc)
             {
                 struct CONFIG_ConfigEntry entry;
-                UTIL_SignedSize level;
+                uint64_t level;
 
                 level = UTIL_str_to_unsigned_base10(argv[opt + 1]);
                 if (level < 0)
