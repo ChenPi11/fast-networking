@@ -25,6 +25,7 @@
 /* Configurable options for multicast. */
 #define FN_VERSION_STRING "1.0.0"
 #define FN_COPYRIGHT_STRING "Copyright (C) 2025 ChenPi11."
+#define FN_FORCEEXIT_COUNT 10
 #define MULTICAST_ADDR "224.0.1.1"
 #define MULTICAST_ADDR6 "ff02::fb"
 #define MULTICAST_PORT 5354
@@ -43,17 +44,6 @@
 /* Maximum length of multicast domain name. */
 #define MULTICAST_MAX_DOMAIN_LEN 256
 
-#include <ctype.h>
-#include <errno.h>
-#include <signal.h>
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-
 #if defined(_WIN32) || defined(_WIN64)
 #define HAS_WINDOWS 1
 #endif
@@ -65,6 +55,17 @@
 #if defined(__STDC_LIB_EXT1__) || (_MSC_VER >= 1600)
 #define HAS_SAFE_C_LIB 1
 #endif
+
+#include <ctype.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #if HAS_WINDOWS
 #include <Windows.h>
@@ -103,7 +104,9 @@
 #endif
 #endif
 
+#if 0
 #pragma region util types
+#endif
 
 /* Boolean type. */
 typedef unsigned int UTIL_Bool;
@@ -118,6 +121,12 @@ typedef unsigned int UTIL_Bool;
 /* Minimum of A and B. */
 #define UTIL_min(a, b) ((a) < (b) ? (a) : (b))
 
+#if defined(__cplusplus)
+#define UTIL_register
+#else
+#define UTIL_register register
+#endif
+
 /* Maximum signed value for type of size N (e.g. UTIL_MAX_SIGNED_VALUE(4) is
    2147483647 for int32_t). */
 #define UTIL_MAX_SIGNED_VALUE(x) ((int64_t)(((uint64_t)1 << ((x) * 8 - 1)) - 1))
@@ -130,10 +139,20 @@ typedef ptrdiff_t UTIL_SignedSize;
 typedef ssize_t UTIL_SignedSize;
 #endif
 
+/* Constant string type. */
+typedef const char *UTIL_ConstString;
+
+/* Mutable string buffer type. */
+typedef char *UTIL_StringBuffer;
+
 /* Maximum value for UTIL_SignedSize. */
 #define UTIL_SSIZE_MAX UTIL_MAX_SIGNED_VALUE(sizeof(UTIL_SignedSize))
 
+#if 0
+#pragma endregion
+
 #pragma region exception
+#endif
 
 /* Exception error categories. */
 enum EXC_ErrrorCategory
@@ -148,7 +167,12 @@ enum EXC_ErrrorCategory
     EXC_CATEGORY_FN
 };
 
-#define EFN_MAX_CAPACITY_EXCEEDED 1 /* Capacity exceeded. */
+#define EFN_MAX_CAPACITY_EXCEEDED 1       /* Capacity exceeded. */
+#define EFN_TRY_AGAIN 2                   /* Try again. */
+#define EFN_COMPRESSION_PTR_UNSUPPORTED 3 /* DNS compression pointer unsupported. */
+#define EFN_INVALID_HOSTNAME 4            /* Invalid hostname. */
+#define EFN_NO_MULTICAST_JOINED 5         /* No interfaces joined the multicast group */
+#define EFN_JOIN_REFUSED 6                /* Join request refused. */
 
 /* Exception error code. */
 struct EXC_ErrorCode
@@ -226,7 +250,45 @@ void EXC_clear_last_error(enum EXC_ErrrorCategory category)
     } while (0)
 #endif
 
+/* Get error message for ERROR. */
+UTIL_ConstString EXC_strerror(struct EXC_ErrorCode error)
+{
+    switch (error.category)
+    {
+    case EXC_CATEGORY_LIBC:
+        return strerror(error.code);
+    case EXC_CATEGORY_SYS:
+        return strerror(error.code);
+    case EXC_CATEGORY_NET:
+        return strerror(error.code);
+    case EXC_CATEGORY_FN:
+        switch (error.code)
+        {
+        case EFN_MAX_CAPACITY_EXCEEDED:
+            return "Max capacity exceeded";
+        case EFN_TRY_AGAIN:
+            return "Try again";
+        case EFN_COMPRESSION_PTR_UNSUPPORTED:
+            return "DNS compression pointer unsupported";
+        case EFN_INVALID_HOSTNAME:
+            return "Invalid hostname";
+        case EFN_NO_MULTICAST_JOINED:
+            return "No interfaces joined the multicast group";
+        case EFN_JOIN_REFUSED:
+            return "Join request refused";
+        default:
+            return "Unknown error";
+        }
+    default:
+        return "Unknown error category";
+    }
+}
+
+#if 0
+#pragma endregion
+
 #pragma region result
+#endif
 
 /* A generic result type definition utility. */
 #define RESULT_GENERIC(ResultType)                                                                                     \
@@ -238,11 +300,19 @@ void EXC_clear_last_error(enum EXC_ErrrorCategory category)
             ResultType value;                                                                                          \
         } result;                                                                                                      \
     } RESULT_##ResultType;                                                                                             \
-    RESULT_##ResultType RESULT_error_##ResultType(struct EXC_ErrorCode error_code)                                     \
+    RESULT_##ResultType RESULT_error_##ResultType(int code, enum EXC_ErrrorCategory category)                          \
     {                                                                                                                  \
         RESULT_##ResultType res;                                                                                       \
         res.has_value = UTIL_FALSE;                                                                                    \
-        res.result.error = error_code;                                                                                 \
+        res.result.error.category = category;                                                                          \
+        res.result.error.code = code;                                                                                  \
+        return res;                                                                                                    \
+    }                                                                                                                  \
+    RESULT_##ResultType RESULT_error_##ResultType##_struct(struct EXC_ErrorCode error)                                 \
+    {                                                                                                                  \
+        RESULT_##ResultType res;                                                                                       \
+        res.has_value = UTIL_FALSE;                                                                                    \
+        res.result.error = error;                                                                                      \
         return res;                                                                                                    \
     }                                                                                                                  \
     RESULT_##ResultType RESULT_ok_##ResultType(ResultType value)                                                       \
@@ -260,32 +330,57 @@ typedef struct RESULT_Tag_void
     struct EXC_ErrorCode error;
 } RESULT_void;
 
+/* Create an error result of type void with code and category. */
+RESULT_void RESULT_error_void(int code, enum EXC_ErrrorCategory category)
+{
+    RESULT_void res;
+    res.has_value = UTIL_FALSE;
+    res.error.category = category;
+    res.error.code = code;
+    return res;
+}
+
 /* Create an error result of type void with ERROR_CODE. */
-#define RESULT_error_void(error_code)                                                                                  \
-    (RESULT_void)                                                                                                      \
-    {                                                                                                                  \
-        UTIL_FALSE, error_code                                                                                         \
-    }
+RESULT_void RESULT_error_void_struct(struct EXC_ErrorCode error)
+{
+    RESULT_void res;
+    res.has_value = UTIL_FALSE;
+    res.error = error;
+    return res;
+}
 
 /* Create a success result of type void. */
-#define RESULT_ok_void()                                                                                               \
-    (RESULT_void)                                                                                                      \
-    {                                                                                                                  \
-        UTIL_TRUE, {0, 0}                                                                                              \
-    }
+RESULT_void RESULT_ok_void()
+{
+    RESULT_void res;
+    res.has_value = UTIL_TRUE;
+    return res;
+}
 
 /* Return a void result with error code from last exception. */
-#define RESULT_ERRNO_void(category) RESULT_error_void(EXC_get_last_error((category)))
+RESULT_void RESULT_ERRNO_void(enum EXC_ErrrorCategory category)
+{
+    return RESULT_error_void_struct(EXC_get_last_error(category));
+}
 
 /* Return a result with error code from last exception. */
-#define RESULT_ERRNO(ResultType, category) RESULT_error_##ResultType(EXC_get_last_error(category))
+#define RESULT_ERRNO(ResultType, category) RESULT_error_##ResultType##_struct(EXC_get_last_error(category))
+
+#if 0
+#pragma endregion
 
 #pragma region types
+#endif
 
 RESULT_GENERIC(UTIL_SignedSize)
 RESULT_GENERIC(uint64_t)
+RESULT_GENERIC(UTIL_ConstString)
+
+#if 0
+#pragma endregion
 
 #pragma region utils
+#endif
 
 /* Duplicate memory block SRC of size N. Return NULL on error. */
 void *UTIL_memdup(const void *src, size_t n)
@@ -305,14 +400,17 @@ void *UTIL_memdup(const void *src, size_t n)
 }
 
 /* Duplicate string STR. Return NULL on error. */
-#define UTIL_strdup(str) UTIL_memdup((str), strlen(str) + 1)
+UTIL_StringBuffer UTIL_strdup(const char *src)
+{
+    return (UTIL_StringBuffer)UTIL_memdup((src), strlen(src) + 1);
+}
 
 /* Print formatted string to BUFFER. Return number of characters printed or negative error code. */
-RESULT_UTIL_SignedSize UTIL_vsprintf(char **buffer, const char *fmt, va_list args)
+RESULT_UTIL_SignedSize UTIL_vsprintf(UTIL_StringBuffer *buffer, UTIL_ConstString fmt, va_list args)
 {
     RESULT_UTIL_SignedSize ret;
     UTIL_SignedSize res;
-    char *tmp_buffer;
+    UTIL_StringBuffer tmp_buffer;
     va_list ap_len;
     va_list ap_write;
 
@@ -335,7 +433,7 @@ RESULT_UTIL_SignedSize UTIL_vsprintf(char **buffer, const char *fmt, va_list arg
         goto FAIL;
     }
 
-    tmp_buffer = malloc((size_t)res + 1);
+    tmp_buffer = (UTIL_StringBuffer)malloc((size_t)res + 1);
     if (!tmp_buffer)
     {
         ret = RESULT_ERRNO(UTIL_SignedSize, EXC_CATEGORY_LIBC);
@@ -463,9 +561,9 @@ UTIL_Bool UTIL_timer_ontime(struct UTIL_Timer *timer, uint64_t duration_ms)
 /* String array structure. */
 struct UTIL_StrArray
 {
-    size_t size;     /* Current number of elements. */
-    size_t capacity; /* Current capacity. */
-    char **arr;      /* Array of strings. */
+    size_t size;            /* Current number of elements. */
+    size_t capacity;        /* Current capacity. */
+    UTIL_StringBuffer *arr; /* Array of strings. */
 };
 
 /* Initialize string array ARR with initial capacity of INITIAL_CAPACITY. */
@@ -474,7 +572,7 @@ RESULT_void UTIL_str_array_init(struct UTIL_StrArray *arr, size_t initial_capaci
     if (arr == NULL || initial_capacity == 0)
         abort();
 
-    arr->arr = (char **)malloc(sizeof(char *) * initial_capacity);
+    arr->arr = (UTIL_StringBuffer *)malloc(sizeof(UTIL_StringBuffer) * initial_capacity);
     if (arr->arr == NULL)
         return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
@@ -485,9 +583,9 @@ RESULT_void UTIL_str_array_init(struct UTIL_StrArray *arr, size_t initial_capaci
 }
 
 /* Append string DATA to string array ARR.*/
-RESULT_void UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
+RESULT_void UTIL_str_array_append(struct UTIL_StrArray *arr, UTIL_ConstString data)
 {
-    char **new_arr;
+    UTIL_StringBuffer *new_arr;
     size_t new_capacity;
 
     if (arr == NULL || data == NULL)
@@ -496,7 +594,7 @@ RESULT_void UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
     if (arr->size >= arr->capacity)
     {
         new_capacity = arr->capacity * 2;
-        new_arr = (char **)realloc(arr->arr, sizeof(char *) * new_capacity);
+        new_arr = (UTIL_StringBuffer *)realloc(arr->arr, sizeof(UTIL_StringBuffer) * new_capacity);
         if (new_arr == NULL)
             return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
@@ -513,7 +611,7 @@ RESULT_void UTIL_str_array_append(struct UTIL_StrArray *arr, const char *data)
 }
 
 /* Check if DATA is in string array ARR. Return 1 if found, 0 if not found or on error. */
-UTIL_Bool UTIL_str_in_array(const char *data, struct UTIL_StrArray *arr)
+UTIL_Bool UTIL_str_in_array(UTIL_ConstString data, struct UTIL_StrArray *arr)
 {
     size_t i;
 
@@ -582,9 +680,9 @@ void UTIL_init_crc16_table(void)
 
 /* Compute CRC16-CCITT hash of string KEY. TABLE_SIZE_2POWER is the size of hash table (must be a power of 2).
    It MUST be a power of 2, or undefined behavior will occur. */
-uint16_t UTIL_str_hash(const char *key, uint16_t table_size_2power)
+uint16_t UTIL_str_hash(UTIL_ConstString key, uint16_t table_size_2power)
 {
-    register uint16_t crc;
+    UTIL_register uint16_t crc;
 
     crc = 0xFFFF;
 
@@ -597,7 +695,7 @@ uint16_t UTIL_str_hash(const char *key, uint16_t table_size_2power)
     return (uint16_t)(crc & (table_size_2power - 1));
 }
 
-UTIL_Bool UTIL_is_file(const char *path)
+UTIL_Bool UTIL_is_file(UTIL_ConstString path)
 {
     FILE *file;
 #if HAS_SAFE_C_LIB
@@ -625,7 +723,7 @@ UTIL_Bool UTIL_is_file(const char *path)
 #define UINT64_MAX_DIV10 UINT64_MAX / 10
 
 /* Convert string STR to unsigned base 10 integer. */
-RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
+RESULT_uint64_t UTIL_str_to_unsigned_base10(UTIL_ConstString str)
 {
     uint64_t result;
     int digit;
@@ -635,7 +733,7 @@ RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
 
     result = 0;
 
-    // Skip leading whitespace.
+    /* Skip leading whitespace. */
     while (isspace((unsigned char)*str))
     {
         str++;
@@ -643,28 +741,28 @@ RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
 
     if (*str == '\0')
     {
-        // Empty string or only whitespace.
-        return RESULT_error_uint64_t((struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC});
+        /* Empty string or only whitespace. */
+        return RESULT_error_uint64_t(EINVAL, EXC_CATEGORY_LIBC);
     }
 
     while (*str)
     {
         if (!isdigit((unsigned char)*str))
         {
-            // Encountered non-digit character, return failure.
-            return RESULT_error_uint64_t((struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC});
+            /* Encountered non-digit character, return failure. */
+            return RESULT_error_uint64_t(EINVAL, EXC_CATEGORY_LIBC);
         }
 
-        digit = *str - '0'; // Convert character to digit.
+        digit = *str - '0'; /* Convert character to digit. */
 
-        // Check for overflow.
+        /* Check for overflow. */
         if (result > UINT64_MAX_DIV10 || (result == UINT64_MAX_DIV10 && digit > 7))
         {
-            // Overflow case.
-            return RESULT_error_uint64_t((struct EXC_ErrorCode){ERANGE, EXC_CATEGORY_LIBC});
+            /* Overflow case. */
+            return RESULT_error_uint64_t(ERANGE, EXC_CATEGORY_LIBC);
         }
 
-        // Update result.
+        /* Update result. */
         result = result * 10 + digit;
 
         str++;
@@ -673,7 +771,11 @@ RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
     return RESULT_ok_uint64_t(result);
 }
 
+#if 0
+#pragma endregion
+
 #pragma region fmt
+#endif
 
 /* Maximum number of arguments supported. MUST <= 9 */
 #define FMT_MAX_ARGS 9
@@ -682,10 +784,10 @@ RESULT_uint64_t UTIL_str_to_unsigned_base10(const char *str)
    We do NOT consume a va_list here; instead, caller provides ARGVALS[] and
    provided count (number of valid entries). Placeholders referencing indices
    beyond provided args are emitted literally (as "%n"). Returns -1 on error. */
-static UTIL_SignedSize FMT__count_with_args(const char *fmt, const char *argvals[], int provided)
+static UTIL_SignedSize FMT__count_with_args(UTIL_ConstString fmt, UTIL_ConstString argvals[], int provided)
 {
     UTIL_SignedSize ret;
-    const char *p;
+    UTIL_ConstString p;
     size_t out_len;
 
     if (!fmt)
@@ -702,7 +804,7 @@ static UTIL_SignedSize FMT__count_with_args(const char *fmt, const char *argvals
     {
         if (*p == '%')
         {
-            const char *q;
+            UTIL_ConstString q;
 
             if (p[1] == '%')
             {
@@ -715,7 +817,7 @@ static UTIL_SignedSize FMT__count_with_args(const char *fmt, const char *argvals
             if (isdigit((unsigned char)*q))
             {
                 int idx;
-                const char *r;
+                UTIL_ConstString r;
 
                 idx = 0;
                 r = q;
@@ -801,16 +903,16 @@ a va_list of arguments. The formatted string is stored in the buffer pointed to 
 BUFFER. If BUFFER is NULL, the function returns the required buffer size (including
 terminating NUL) without formatting.
 */
-RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
+RESULT_void FMT_vformat(UTIL_StringBuffer *buffer, UTIL_ConstString fmt, va_list ap)
 {
-    char *buf;
+    UTIL_StringBuffer buf;
     UTIL_SignedSize need;
     size_t bufsize;
     int max_idx;
-    const char *argvals[FMT_MAX_ARGS];
+    UTIL_ConstString argvals[FMT_MAX_ARGS];
     int provided;
-    const char *p;
-    char *w;
+    UTIL_ConstString p;
+    UTIL_StringBuffer w;
     size_t remaining;
     int i;
 
@@ -824,7 +926,7 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
     {
         if (*p == '%')
         {
-            const char *q;
+            UTIL_ConstString q;
             if (p[1] == '%')
             {
                 p += 2;
@@ -870,8 +972,8 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
         /* Read arguments up to max_idx, stopping at first NULL sentinel. */
         for (i = 0; i < max_idx; i++)
         {
-            const char *s;
-            s = va_arg(ap, const char *);
+            UTIL_ConstString s;
+            s = va_arg(ap, UTIL_ConstString);
             if (s == NULL)
             {
                 /* Treat NULL as end-of-args sentinel. */
@@ -885,10 +987,10 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
     /* Determine required size using cached args. */
     need = FMT__count_with_args(fmt, argvals, provided);
     if (need <= 0)
-        return (RESULT_void){UTIL_FALSE, (struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC}};
+        return RESULT_error_void(EINVAL, EXC_CATEGORY_LIBC);
 
     bufsize = (size_t)need;
-    buf = (char *)malloc(bufsize);
+    buf = (UTIL_StringBuffer)malloc(bufsize);
     if (!buf)
         return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
 
@@ -901,7 +1003,7 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
     {
         if (*p == '%')
         {
-            const char *q;
+            UTIL_ConstString q;
 
             if (p[1] == '%')
             {
@@ -916,7 +1018,7 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
             if (isdigit((unsigned char)*q))
             {
                 int idx;
-                const char *r;
+                UTIL_ConstString r;
 
                 idx = 0;
                 r = q;
@@ -929,7 +1031,7 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
                 {
                     if (idx <= provided)
                     {
-                        const char *s;
+                        UTIL_ConstString s;
                         size_t slen;
 
                         s = argvals[idx - 1];
@@ -993,11 +1095,11 @@ RESULT_void FMT_vformat(char **buffer, const char *fmt, va_list ap)
 
 ERR_FREE_BUF:
     free(buf);
-    return (RESULT_void){UTIL_FALSE, (struct EXC_ErrorCode){EINVAL, EXC_CATEGORY_LIBC}};
+    return RESULT_error_void(EINVAL, EXC_CATEGORY_LIBC);
 }
 
 /* Formats a string using the given format specifier and arguments. Stores the result in BUFFER. */
-RESULT_void FMT_format(char **buffer, const char *fmt, ...)
+RESULT_void FMT_format(UTIL_StringBuffer *buffer, UTIL_ConstString fmt, ...)
 {
     va_list ap;
     RESULT_void ret;
@@ -1009,12 +1111,16 @@ RESULT_void FMT_format(char **buffer, const char *fmt, ...)
     return ret;
 }
 
+#if 0
+#pragma endregion
+
 #pragma region map
+#endif
 
 /* A string:any map node. */
 struct MAP_Node
 {
-    char *key;             /* Malloc-allocated string key. */
+    UTIL_StringBuffer key; /* Malloc-allocated string key. */
     void *value;           /* Malloc-allocated value. */
     struct MAP_Node *next; /* Next node in bucket (linked list for collision resolution). */
     uint16_t hash;         /* Cached hash value to avoid recomputation. */
@@ -1083,7 +1189,7 @@ static RESULT_void MAP__resize(struct MAP_Map *map)
     if (map->capacity_power >= 14)
     {
         /* Max capacity reached. */
-        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED);
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
@@ -1141,7 +1247,7 @@ EXIT:
 }
 
 /* (Internal) Create a new MAP_Node with the given KEY, VALUE, and HASH. If error, set libc error and return NULL. */
-static RESULT_MAP_NodePtr MAP__create_node(char *key, void *value, uint16_t hash)
+static RESULT_MAP_NodePtr MAP__create_node(UTIL_StringBuffer key, void *value, uint16_t hash)
 {
     struct MAP_Node *node;
 
@@ -1164,24 +1270,25 @@ static RESULT_MAP_NodePtr MAP__create_node(char *key, void *value, uint16_t hash
 }
 
 /* Set a key-value pair in the MAP. If the KEY already exists, update its value. Notice that the KEY and VALUE **MUST**
-   be malloc-allocated and the map will take ownership of them. Returns 0 on success, -EINVAL if the map or key or value
-   is NULL, -ENOMEM if out of memory. */
-int MAP_set(struct MAP_Map *map, char *key, void *value)
+   be malloc-allocated and the map will take ownership of them. */
+RESULT_void MAP_set(struct MAP_Map *map, UTIL_StringBuffer key, void *value)
 {
-    int ret;
+    RESULT_void ret;
     uint16_t hash;
     uint16_t index;
     struct MAP_Node *node;
     struct MAP_Node *new_node;
+    RESULT_MAP_NodePtr new_node_res;
 
-    ret = 0;
+    ret = RESULT_ok_void();
+    new_node = NULL;
 
     if (map == NULL || key == NULL || value == NULL)
-        return -EINVAL;
+        abort();
 
     /* Check if resizing is needed. */
     ret = MAP__resize(map);
-    if (ret < 0)
+    if (!ret.has_value)
     {
         return ret;
     }
@@ -1206,34 +1313,36 @@ int MAP_set(struct MAP_Map *map, char *key, void *value)
             }
             node->key = key;
             node->value = value;
-            return 0; /* Updated existing key. */
+            return ret; /* Updated existing key. */
         }
         node = node->next;
     }
 
     /* Create new node. */
-    new_node = MAP__create_node(key, value, hash);
-    if (!new_node)
-        return -EXC_get_last_error(EXC_ENTRY_LIBC);
+    new_node_res = MAP__create_node(key, value, hash);
+    if (!new_node_res.has_value)
+        return RESULT_error_void_struct(new_node_res.result.error);
+
+    new_node = new_node_res.result.value;
 
     /* Insert new node at the head of the bucket. */
     new_node->next = map->buckets[index];
     map->buckets[index] = new_node;
     map->size++;
 
-    return 0;
+    return ret;
 }
 
 /* Get the value associated with the given KEY in the MAP. Returns NULL if the KEY is not found. Don't free the returned
    value because it is managed by the MAP. */
-const void *MAP_get(const struct MAP_Map *map, const char *key)
+const void *MAP_get(const struct MAP_Map *map, UTIL_ConstString key)
 {
     uint16_t hash;
     uint16_t index;
     struct MAP_Node *node;
 
     if (!map || !key)
-        return NULL;
+        abort();
 
     hash = UTIL_str_hash(key, map->capacity);
     index = hash;
@@ -1255,7 +1364,7 @@ const void *MAP_get(const struct MAP_Map *map, const char *key)
 #define MAP_contains(map, key) (MAP_get(map, key) != NULL)
 
 /* Remove the key-value pair with the given KEY from the MAP. If the KEY does not exist, nothing will happen. */
-void MAP_remove(struct MAP_Map *map, const char *key)
+void MAP_remove(struct MAP_Map *map, UTIL_ConstString key)
 {
     uint16_t hash;
     uint16_t index;
@@ -1340,67 +1449,11 @@ void MAP_free(struct MAP_Map *map)
     free(map->buckets);
 }
 
-/* Map iterator. */
-struct MAP_MapIterator
-{
-    const struct MAP_Map *map; /* The map to iterate over. */
-    uint16_t bucket_index;     /* The current bucket index. */
-    struct MAP_Node *current;  /* The current node. */
-};
-
-/* Create a new iterator for the given MAP. */
-struct MAP_MapIterator MAP_create_iterator(const struct MAP_Map *map)
-{
-    struct MAP_MapIterator iter;
-
-    memset(&iter, 0, sizeof(struct MAP_MapIterator));
-    iter.map = map;
-
-    if (map && map->size > 0)
-    {
-        while (iter.bucket_index < map->capacity && map->buckets[iter.bucket_index] == NULL)
-        {
-            iter.bucket_index++;
-        }
-
-        if (iter.bucket_index < map->capacity)
-        {
-            iter.current = map->buckets[iter.bucket_index];
-        }
-    }
-
-    return iter;
-}
-
-/* Move the iterator to the next element. Returns 0 on success, -EINVAL if the iterator is invalid or has reached the
-   end. */
-int MAP_next(struct MAP_MapIterator *iter, const char **key, char **value)
-{
-    if (iter == NULL || iter->map == NULL || iter->current == NULL)
-    {
-        return -EINVAL;
-    }
-
-    /* Find current node. */
-    if (key)
-        *key = iter->current->key;
-    if (value)
-        *value = iter->current->value;
-
-    /* Move to next node. */
-    iter->current = iter->current->next;
-
-    /* If current bucket is empty, move to next non-empty bucket. */
-    while (!iter->current && iter->bucket_index + 1 < iter->map->capacity)
-    {
-        iter->bucket_index++;
-        iter->current = iter->map->buckets[iter->bucket_index];
-    }
-
-    return 0;
-}
+#if 0
+#pragma endregion
 
 #pragma region logging
+#endif
 
 /* Logging level. */
 enum LOGGING_LogLevel
@@ -1419,10 +1472,11 @@ enum LOGGING_LogLevel
     LOG_LEVEL_MAX
 };
 
+/* Validate logging level. */
 #define LOGGING_is_valid_level(level) ((level) >= LOG_LEVEL_DEBUG && (level) <= LOG_LEVEL_ERROR)
 
 /* Logging formats. */
-typedef const char *LOGGING_LogFormats[4];
+typedef UTIL_ConstString LOGGING_LogFormats[4];
 
 /* (Internal) Current logging level. */
 static enum LOGGING_LogLevel g_LOGGING_current_level;
@@ -1458,7 +1512,7 @@ void LOGGING_initialize()
 }
 
 /* Convert logging level to string. */
-const char *LOGGING_log_level_tostring(enum LOGGING_LogLevel level)
+UTIL_ConstString LOGGING_log_level_tostring(enum LOGGING_LogLevel level)
 {
     switch (level)
     {
@@ -1476,38 +1530,41 @@ const char *LOGGING_log_level_tostring(enum LOGGING_LogLevel level)
 }
 
 /* Log a message with level LEVEL and format FMT using variable argument list ARGS. */
-void LOGGING_vlog(enum LOGGING_LogLevel level, const char *fmt, va_list args)
+void LOGGING_vlog(enum LOGGING_LogLevel level, UTIL_ConstString fmt, va_list args)
 {
-    UTIL_SignedSize ret;
-    char *buffer1;
-    char *buffer2;
+    RESULT_UTIL_SignedSize ret;
+    RESULT_void ret2;
+    unsigned long ret3;
+    UTIL_StringBuffer buffer1;
+    UTIL_StringBuffer buffer2;
+    size_t buffer_nmemb;
 
     buffer1 = NULL;
     buffer2 = NULL;
 
     ret = UTIL_vsprintf(&buffer1, fmt, args);
-    if (ret < 0)
+    if (!ret.has_value)
     {
         perror("(logging)UTIL_vsprintf");
         goto EXIT;
     }
 
-    ret = FMT_format(&buffer2, g_LOGGING_format[level], LOGGING_log_level_tostring(level), buffer1, NULL);
-    if (ret < 0)
+    ret2 = FMT_format(&buffer2, g_LOGGING_format[level], LOGGING_log_level_tostring(level), buffer1, NULL);
+    if (!ret2.has_value)
     {
-        EXC_set_last_error(EXC_ENTRY_LIBC, -ret);
-        perror("(logging)FMT_format");
+        perror("FMT_format");
         goto EXIT;
     }
 
-    ret = fwrite(buffer2, 1, strlen(buffer2), stderr);
-    if (ret < 0)
+    buffer_nmemb = strlen(buffer2);
+    ret3 = fwrite(buffer2, 1, buffer_nmemb, stderr);
+    if (ret3 < buffer_nmemb)
     {
         perror("(logging)fwrite");
         goto EXIT;
     }
-    ret = fwrite("\n", 1, 1, stderr);
-    if (ret < 0)
+    ret3 = fwrite("\n", 1, 1, stderr);
+    if (ret3 < 1)
     {
         perror("(logging)fwrite");
         goto EXIT;
@@ -1530,7 +1587,7 @@ UTIL_Bool LOGGING_logfile_supports_color()
 }
 
 /* Log a message with level LEVEL and format FMT. */
-void LOGGING_log(enum LOGGING_LogLevel level, const char *fmt, ...)
+void LOGGING_log(enum LOGGING_LogLevel level, UTIL_ConstString fmt, ...)
 {
     va_list args;
 
@@ -1548,7 +1605,7 @@ void LOGGING_log(enum LOGGING_LogLevel level, const char *fmt, ...)
 
 #if LOGGING_LEVEL >= LOG_LEVEL_DEBUG
 /* Log a debug message with format FMT. */
-void LOGGING_debug(const char *fmt, ...)
+void LOGGING_debug(UTIL_ConstString fmt, ...)
 {
     va_list args;
 
@@ -1573,7 +1630,7 @@ void LOGGING_debug(const char *fmt, ...)
 
 #if LOGGING_LEVEL >= LOG_LEVEL_INFO
 /* Log an info message with format FMT. */
-void LOGGING_info(const char *fmt, ...)
+void LOGGING_info(UTIL_ConstString fmt, ...)
 {
     va_list args;
 
@@ -1598,7 +1655,7 @@ void LOGGING_info(const char *fmt, ...)
 
 #if LOGGING_LEVEL >= LOG_LEVEL_WARN
 /* Log a warning message with format FMT. */
-void LOGGING_warn(const char *fmt, ...)
+void LOGGING_warn(UTIL_ConstString fmt, ...)
 {
     va_list args;
 
@@ -1623,7 +1680,7 @@ void LOGGING_warn(const char *fmt, ...)
 
 #if LOGGING_LEVEL >= LOG_LEVEL_ERROR
 /* Log an error message with format FMT. */
-void LOGGING_error(const char *fmt, ...)
+void LOGGING_error(UTIL_ConstString fmt, ...)
 {
     va_list args;
 
@@ -1646,22 +1703,28 @@ void LOGGING_error(const char *fmt, ...)
     } while (0)
 #endif
 
-/* Log an error message with message MSG and error code RET. */
-void LOGGING_perror(const char *msg, int ret)
+/* Log an error message with message MSG and error code EC. */
+void LOGGING_perror(UTIL_ConstString msg, struct EXC_ErrorCode ec)
 {
-    LOGGING_error("%s: %s", msg, strerror(-ret));
+    LOGGING_error("%s: %s", msg, EXC_strerror(ec));
 }
 
-/* Log an warning message with message MSG and error code RET. */
-void LOGGING_pwarn(const char *msg, int ret)
+/* Log an warning message with message MSG and error code EC. */
+void LOGGING_pwarn(UTIL_ConstString msg, struct EXC_ErrorCode rc)
 {
-    LOGGING_warn("%s: %s", msg, strerror(-ret));
+    LOGGING_warn("%s: %s", msg, EXC_strerror(rc));
 }
+
+#if 0
+#pragma endregion
 
 #pragma region net
+#endif
 
 /* Network socket type. */
 typedef int NET_Socket;
+
+RESULT_GENERIC(NET_Socket)
 
 /* Invalid socket constant. */
 #define NET_INVALID_SOCKET (NET_Socket)(-1)
@@ -1698,15 +1761,15 @@ struct NET_InetAddr
 };
 
 /* Initialize the networking subsystem. */
-int NET_initialize()
+RESULT_void NET_initialize()
 {
-    return 0;
+    return RESULT_ok_void();
 }
 
 /* Deinitialize the networking subsystem. */
-int NET_deinitialize()
+RESULT_void NET_deinitialize()
 {
-    return 0;
+    return RESULT_ok_void();
 }
 
 /* Close a socket. */
@@ -1717,48 +1780,40 @@ int NET_deinitialize()
             close(s);                                                                                                  \
     } while (0)
 
-/* Check if the error code ERR indicates that the operation should be retried later. */
-#define NET_need_try_again(err) (-(err) == EAGAIN || -(err) == EWOULDBLOCK)
-
 /* Check if the error code ERR indicates that the network buffer is full. */
-#define NET_kern_buffer_is_full(err) (-(err) == ENOBUFS)
+#define NET_kern_buffer_is_full(err) (-(err.code) == ENOBUFS)
 
 /* Create an asynchronous socket for the given internet version INET_VERSION. */
-NET_Socket NET_async_socket(enum NET_InetVersion inet_version)
+RESULT_NET_Socket NET_async_socket(enum NET_InetVersion inet_version)
 {
-    int ret;
     NET_Socket sock;
     int optval;
-
-    ret = 0;
 
     sock = (NET_Socket)socket(inet_version, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (sock < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
-        goto EXIT;
+        return RESULT_ERRNO(NET_Socket, EXC_CATEGORY_NET);
     }
 
     /* Enable address reuse. */
     optval = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
-        goto EXIT;
+        goto FREE_SOCK;
     }
 
-EXIT:
-    if (ret != 0)
-    {
-        NET_closesocket(sock);
-        return (NET_Socket)ret;
-    }
-    return sock;
+    return RESULT_ok_NET_Socket(sock);
+FREE_SOCK:
+    NET_closesocket(sock);
+    return RESULT_ERRNO(NET_Socket, EXC_CATEGORY_NET);
 }
 
-/* Load the address of a sockaddr_storage ADDR into OUT_ADDR. Returns 0 on success, negative error code on failure. */
-int NET_load_addr(struct sockaddr_storage *addr, struct NET_InetAddr *out_addr)
+/* Load the address of a sockaddr_storage ADDR into OUT_ADDR. */
+void NET_load_addr(struct sockaddr_storage *addr, struct NET_InetAddr *out_addr)
 {
+    if (addr == NULL || out_addr == NULL)
+        abort();
+
     if (addr->ss_family == AF_INET)
     {
         struct sockaddr_in *addr_in;
@@ -1789,19 +1844,15 @@ int NET_load_addr(struct sockaddr_storage *addr, struct NET_InetAddr *out_addr)
         }
     }
     else
-    {
-        /* Unknown address family: default to IPv4 zeros */
-        out_addr->version = NET_INET_VERSION_4;
-        memset(out_addr->addr.inet4, 0, sizeof(NET_Inet4Addr));
-        return -EAFNOSUPPORT;
-    }
-
-    return 0;
+        abort(); /* Should never happen. */
 }
 
-/* Load the port of a ADDR into OUT_PORT. Returns 0 on success, negative error code on failure. */
-int NET_load_port(struct sockaddr_storage *addr, uint16_t *out_port)
+/* Load the port of a ADDR into OUT_PORT. */
+void NET_load_port(struct sockaddr_storage *addr, uint16_t *out_port)
 {
+    if (addr == NULL || out_port == NULL)
+        abort();
+
     if (addr->ss_family == AF_INET)
     {
         struct sockaddr_in *addr_in;
@@ -1817,20 +1868,12 @@ int NET_load_port(struct sockaddr_storage *addr, uint16_t *out_port)
         *out_port = ntohs(addr_in6->sin6_port);
     }
     else
-    {
-        return -EAFNOSUPPORT;
-    }
-
-    return 0;
+        abort(); /* Should never happen. */
 }
 
 /* Convert the internet address ADDR to a string representation in OUT_BUF. */
-int NET_repr_inet_addr(const struct NET_InetAddr *addr, char *out_buf, size_t out_buf_len)
+void NET_repr_inet_addr(const struct NET_InetAddr *addr, UTIL_StringBuffer out_buf, size_t out_buf_len)
 {
-    int ret;
-
-    ret = 0;
-
     if (addr->version == NET_INET_VERSION_4)
     {
         snprintf(out_buf, out_buf_len, "%u.%u.%u.%u", addr->addr.inet4[0], addr->addr.inet4[1], addr->addr.inet4[2],
@@ -1843,66 +1886,51 @@ int NET_repr_inet_addr(const struct NET_InetAddr *addr, char *out_buf, size_t ou
                  addr->addr.inet6[6], addr->addr.inet6[7]);
     }
     else
-    {
-        ret = -EAFNOSUPPORT;
-    }
-
-    return ret;
+        abort();
 }
 
+/* Maximum length of a string representation of an internet address. */
+#define NET_ADDR_REPR_MAX_LENGTH 46
+
 /* Receive data from a socket SK, storing the source address and port in SRC_ADDR and SRC_PORT. */
-UTIL_SignedSize NET_recvfrom(NET_Socket sock, void *buf, size_t len, int flags, struct NET_InetAddr *src_addr,
-                             uint16_t *src_port)
+RESULT_UTIL_SignedSize NET_recvfrom(NET_Socket sock, void *buf, size_t len, int flags, struct NET_InetAddr *src_addr,
+                                    uint16_t *src_port)
 {
-    UTIL_SignedSize ret;
     UTIL_SignedSize received;
     struct sockaddr_storage addr;
     socklen_t addr_len;
 
     if (src_addr == NULL || src_port == NULL || buf == NULL || len == 0)
-    {
         abort();
-    }
 
-    ret = 0;
     addr_len = sizeof(addr);
 
     received = (UTIL_SignedSize)recvfrom(sock, buf, len, flags, (struct sockaddr *)&addr, &addr_len);
     if (received < 0)
     {
-        return received;
+        /* Convert EAGAIN. */
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return RESULT_error_UTIL_SignedSize(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
+        }
+        return RESULT_ERRNO(UTIL_SignedSize, EXC_CATEGORY_NET);
     }
 
-    ret = NET_load_addr(&addr, src_addr);
-    if (ret != 0)
-    {
-        return ret;
-    }
+    NET_load_addr(&addr, src_addr);
+    NET_load_port(&addr, src_port);
 
-    ret = NET_load_port(&addr, src_port);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return received;
+    return RESULT_ok_UTIL_SignedSize(received);
 }
 
 /* Send data to the specified destination address and port. */
-UTIL_SignedSize NET_sendto(NET_Socket sock, const void *buf, size_t len, int flags,
-                           const struct NET_InetAddr *dest_addr, uint16_t dest_port)
+RESULT_void NET_sendto(NET_Socket sock, const void *buf, size_t len, int flags, const struct NET_InetAddr *dest_addr,
+                       uint16_t dest_port)
 {
-    UTIL_SignedSize ret;
     struct sockaddr_storage addr;
     socklen_t addr_len;
 
     if (dest_addr == NULL || buf == NULL || len == 0)
-    {
-        return -EINVAL;
-    }
-
-    ret = 0;
-    addr_len = sizeof(addr);
+        abort();
 
     memset(&addr, 0, sizeof(addr));
 
@@ -1937,20 +1965,32 @@ UTIL_SignedSize NET_sendto(NET_Socket sock, const void *buf, size_t len, int fla
         addr_len = sizeof(struct sockaddr_in6);
     }
     else
+        abort(); /* Never happen. */
+
+    if (sendto(sock, buf, len, flags, (struct sockaddr *)&addr, addr_len) < 0)
     {
-        return -EAFNOSUPPORT;
+        /* Convert EAGAIN. */
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
+        }
+        return RESULT_ERRNO_void(EXC_CATEGORY_NET);
     }
 
-    ret = (UTIL_SignedSize)sendto(sock, buf, len, flags, (struct sockaddr *)&addr, addr_len);
-    if (ret < 0)
-    {
-        return ret;
-    }
-
-    return ret;
+    return RESULT_ok_void();
 }
 
+/* Check if the error code ERR indicates a temporary failure (EAGAIN). */
+UTIL_Bool NET_need_try_again(struct EXC_ErrorCode err)
+{
+    return (err.category == EXC_CATEGORY_FN) && (err.code == EFN_TRY_AGAIN);
+}
+
+#if 0
+#pragma endregion
+
 #pragma region dns
+#endif
 
 /* DNS header: standard sections and fields. */
 enum DNS_Opcode
@@ -1974,7 +2014,7 @@ struct DNS_Header
 void DNS_fill_header(struct DNS_Header *header, uint8_t *buf, size_t len)
 {
     if (header == NULL || buf == NULL || len < sizeof(struct DNS_Header))
-        return;
+        abort();
 
     memcpy(header, buf, sizeof(struct DNS_Header));
     header->id = ntohs(header->id);
@@ -2004,29 +2044,28 @@ struct DNS_Question
    OFFSET: starting offset of name.
    OUT_NAME: output domain string (malloc'ed; caller frees).
    CONSUMED: bytes consumed including terminal 0. */
-int DNS_parse_name(const uint8_t *buf, size_t len, size_t offset, uint8_t **out_name, size_t *consumed)
+RESULT_void DNS_parse_name(const uint8_t *buf, size_t len, size_t offset, uint8_t **out_name, size_t *consumed)
 {
-    int ret;
-    char *tmp;
+    RESULT_void ret;
+    UTIL_StringBuffer tmp;
     size_t tmp_pos;
     size_t pos;
     int first_label;
 
     if (buf == NULL || out_name == NULL || consumed == NULL || offset >= len)
-        return -EINVAL;
+        abort();
 
-    ret = 0;
+    ret = RESULT_ok_void();
     tmp = NULL;
     tmp_pos = 0;
     pos = offset;
     first_label = 1;
 
     /* Use a temporary buffer up to remaining packet length. */
-    tmp = (char *)malloc(len - offset + 1);
-    if (!tmp)
+    tmp = (UTIL_StringBuffer)malloc(len - offset + 1);
+    if (tmp == NULL)
     {
-        ret = -ENOMEM;
-        goto EXIT;
+        return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
     }
 
     while (pos < len)
@@ -2040,17 +2079,18 @@ int DNS_parse_name(const uint8_t *buf, size_t len, size_t offset, uint8_t **out_
             break;
         }
         /* Compression pointers (top two bits 11) are not supported here.
-            In this context we only expect an uncompressed single record. */
+           In this context we only expect an uncompressed single record. */
         if ((lab_len & 0xC0) == 0xC0)
         {
             /* Name compression requires pointer jumps; not implemented. */
-            ret = -EINVAL;
-            goto EXIT;
+            ret = RESULT_error_void(EFN_COMPRESSION_PTR_UNSUPPORTED, EXC_CATEGORY_FN);
+            goto FAIL;
         }
         if (pos + lab_len > len)
         {
-            ret = -EINVAL;
-            goto EXIT;
+            /* Label length exceeds remaining packet length. */
+            ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
+            goto FAIL;
         }
         if (!first_label)
         {
@@ -2065,45 +2105,43 @@ int DNS_parse_name(const uint8_t *buf, size_t len, size_t offset, uint8_t **out_
 
     if (pos > len)
     {
-        ret = -EINVAL;
-        goto EXIT;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
+        goto FAIL;
     }
 
     tmp[tmp_pos] = '\0';
     *out_name = (uint8_t *)tmp;
     *consumed = (pos - offset); /* Includes terminal 0 byte. */
 
-EXIT:
-    if (ret != 0)
-        free(tmp);
+    return ret;
+FAIL:
+    free(tmp);
     return ret;
 }
 
 /* Parse a DNS_Question: name + qtype + qclass.
    Returns 0 on success; fields are host byte order (qtype/qclass via ntohs). Name is malloc'ed; caller frees. */
-int DNS_parse_question(const uint8_t *buf, size_t len, size_t offset, struct DNS_Question *q)
+RESULT_void DNS_parse_question(const uint8_t *buf, size_t len, size_t offset, struct DNS_Question *q)
 {
-    int ret;
+    RESULT_void ret;
     uint8_t *name;
     size_t name_consumed;
-    int rc;
     size_t pos;
     uint16_t net_qtype;
     uint16_t net_qclass;
 
     if (buf == NULL || q == NULL || offset >= len)
-        return -EINVAL;
+        abort();
 
-    ret = 0;
+    ret = RESULT_ok_void();
     memset(q, 0, sizeof(*q));
     name = NULL;
+    name_consumed = 0;
 
     /* Parse domain name. */
-    name_consumed = 0;
-    rc = DNS_parse_name(buf, len, offset, &name, &name_consumed);
-    if (rc != 0)
+    ret = DNS_parse_name(buf, len, offset, &name, &name_consumed);
+    if (!ret.has_value)
     {
-        ret = rc;
         goto EXIT;
     }
 
@@ -2111,7 +2149,7 @@ int DNS_parse_question(const uint8_t *buf, size_t len, size_t offset, struct DNS
     /* Need at least 4 bytes after name for qtype + qclass. */
     if (pos + 4 > len)
     {
-        ret = -EINVAL;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
@@ -2125,21 +2163,22 @@ int DNS_parse_question(const uint8_t *buf, size_t len, size_t offset, struct DNS
     q->qclass = ntohs(net_qclass);
     q->length = (uint32_t)(name_consumed + 4); /* Total bytes consumed for question. */
 
+    name = NULL; /* Transferred ownership. */
+
 EXIT:
-    if (ret != 0)
-        free(name);
+    free(name);
     return ret;
 }
 
 /* DNS Resource Record structure. */
 struct DNS_ResourceRecord
 {
-    char *name;        /* Domain name. (must be freed) */
-    uint16_t type;     /* Record type. */
-    uint16_t class;    /* Record class. */
-    uint32_t ttl;      /* Time to live. */
-    uint16_t rdlength; /* RDATA length. */
-    void *rdata;       /* Record data. (depends on type) */
+    UTIL_StringBuffer name; /* Domain name. (must be freed) */
+    uint16_t type;          /* Record type. */
+    uint16_t rclass;        /* Record class. */
+    uint32_t ttl;           /* Time to live. */
+    uint16_t rdlength;      /* RDATA length. */
+    void *rdata;            /* Record data. (depends on type) */
 };
 
 /* Check if a DNS name is in compressed format (starts with 0xC0). */
@@ -2147,21 +2186,21 @@ struct DNS_ResourceRecord
 
 /* Compute required response length (no content generation).
     Layout: Header(12) + Question(name+4) + each Answer(name+10+rdlength). */
-size_t DNS_dns_name_encoded_len(const char *name)
+size_t DNS_dns_name_encoded_len(UTIL_ConstString name)
 {
     size_t total;
-    const char *p;
+    UTIL_ConstString p;
 
-    /* Calculate label-encoded length: 1 byte per label length + terminal 0 */
+    /* Calculate label-encoded length: 1 byte per label length + terminal \0 */
     if (!name)
-        return 1; /* Only terminal 0. */
+        return 1; /* Only terminal \0. */
 
-    total = 1; /* Includes terminal 0. */
+    total = 1; /* Includes terminal \0. */
     p = name;
 
     while (*p)
     {
-        const char *dot;
+        UTIL_ConstString dot;
         size_t lablen;
 
         dot = strchr(p, '.');
@@ -2187,7 +2226,7 @@ size_t DNS_get_response_len(const struct DNS_Question *q, const struct DNS_Resou
 
     len = sizeof(struct DNS_Header);
     /* Question. */
-    len += DNS_dns_name_encoded_len((const char *)q->name);
+    len += DNS_dns_name_encoded_len((UTIL_ConstString)q->name);
     len += 4; /* qtype + qclass */
 
     /* Answers. */
@@ -2213,34 +2252,31 @@ size_t DNS_get_response_len(const struct DNS_Question *q, const struct DNS_Resou
     } while (0)
 
 /* Encode a dot-separated domain name into DNS label format.
-   Returns 0 on success, negative error code on failure. wlen is set to the number of bytes written. */
-int DNS_encode_name(const char *name, uint8_t *buf, size_t buf_len, size_t *wlen)
+   wlen is set to the number of bytes written. */
+RESULT_void DNS_encode_name(UTIL_ConstString name, uint8_t *buf, size_t buf_len, size_t *wlen)
 {
-    int ret;
-    const char *p;
+    UTIL_ConstString p;
 
-    if (name == NULL || buf == NULL || wlen == NULL)
-        return -EINVAL;
+    if (name == NULL || buf == NULL || buf_len == 0 || wlen == NULL)
+        abort();
 
-    ret = 0;
     *wlen = 0;
     p = name;
     while (*p)
     {
-        const char *dot;
+        UTIL_ConstString dot;
         size_t lablen;
 
         dot = strchr(p, '.');
         lablen = dot ? (size_t)(dot - p) : strlen(p);
         if (lablen > 63)
         {
-            ret = -EINVAL; /* RFC limit: label length must not exceed 63 bytes. */
-            goto EXIT;
+            /* RFC limit: label length must not exceed 63 bytes. */
+            return RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         }
         if (*wlen + 1 + lablen + 1 > buf_len)
         {
-            ret = -ENOSPC;
-            goto EXIT;
+            return RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         }
         buf[(*wlen)++] = (uint8_t)lablen;
         memcpy(buf + *wlen, p, lablen);
@@ -2251,13 +2287,11 @@ int DNS_encode_name(const char *name, uint8_t *buf, size_t buf_len, size_t *wlen
     }
     if (*wlen + 1 > buf_len)
     {
-        ret = -ENOSPC;
-        goto EXIT;
+        return RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
     }
-    buf[(*wlen)++] = 0; /* Terminal zero byte */
+    buf[(*wlen)++] = 0; /* Terminal zero byte. */
 
-EXIT:
-    return ret;
+    return RESULT_ok_void();
 }
 
 /* DNS record type. */
@@ -2278,87 +2312,85 @@ typedef uint8_t DNS_Inet4Addr[4];
 /* Internet IPv6 address. */
 typedef uint8_t DNS_Inet6Addr[16];
 
-/* Build an A record resource with NAME, IP_ADDR. Returns 0 on success, negative error code on failure.
-   Don't forget to free mallocated memory in RR. */
-int DNS_make_A_record(const char *name, DNS_Inet4Addr ip_addr, struct DNS_ResourceRecord *rr)
+/* Build an A record resource with NAME, IP_ADDR. Don't forget to free mallocated memory in RR. */
+RESULT_void DNS_make_A_record(UTIL_ConstString name, DNS_Inet4Addr ip_addr, struct DNS_ResourceRecord *rr)
 {
-    int ret;
+    RESULT_void ret;
 
     if (name == NULL || rr == NULL)
-        return -EINVAL;
+        abort();
 
-    ret = 0;
+    ret = RESULT_ok_void();
     rr->rdata = NULL;
 
     rr->name = UTIL_strdup(name);
     if (!rr->name)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
     rr->type = DNS_TYPE_A;
-    rr->class = DNS_CLASS_IN;
+    rr->rclass = DNS_CLASS_IN;
     rr->ttl = 0;
     rr->rdlength = sizeof(DNS_Inet4Addr);
     rr->rdata = malloc(rr->rdlength);
     if (!rr->rdata)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
     memcpy(rr->rdata, ip_addr, rr->rdlength);
 
 EXIT:
-    if (ret != 0)
+    if (!ret.has_value)
         DNS_free_resource_record(rr);
     return ret;
 }
 
-/* Build an AAAA record resource with NAME, IP_ADDR. Returns 0 on success, negative error code on failure.
-   Don't forget to free mallocated memory in RR. */
-int DNS_make_AAAA_record(const char *name, DNS_Inet6Addr ip_addr, struct DNS_ResourceRecord *rr)
+/* Build an AAAA record resource with NAME, IP_ADDR. Don't forget to free mallocated memory in RR. */
+RESULT_void DNS_make_AAAA_record(UTIL_ConstString name, DNS_Inet6Addr ip_addr, struct DNS_ResourceRecord *rr)
 {
-    int ret;
+    RESULT_void ret;
 
     if (name == NULL || rr == NULL)
-        return -EINVAL;
+        abort();
 
-    ret = 0;
+    ret = RESULT_ok_void();
     rr->rdata = NULL;
 
     rr->name = UTIL_strdup(name);
     if (!rr->name)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
     rr->type = DNS_TYPE_AAAA;
-    rr->class = DNS_CLASS_IN;
+    rr->rclass = DNS_CLASS_IN;
     rr->ttl = 0;
     rr->rdlength = sizeof(DNS_Inet6Addr);
     rr->rdata = malloc(rr->rdlength);
     if (!rr->rdata)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
     memcpy(rr->rdata, ip_addr, rr->rdlength);
 
 EXIT:
-    if (ret != 0)
+    if (!ret.has_value)
         DNS_free_resource_record(rr);
 
     return ret;
 }
 
 /* Build a DNS response from QUERY_HEADER, question Q, and answer records RR. */
-int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Question *q,
-                      const struct DNS_ResourceRecord *rr, size_t rr_count, uint8_t *out_buf, size_t out_buf_len,
-                      size_t *out_len)
+RESULT_void DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Question *q,
+                              const struct DNS_ResourceRecord *rr, size_t rr_count, uint8_t *out_buf,
+                              size_t out_buf_len, size_t *out_len)
 {
-    int ret;
+    RESULT_void ret;
     size_t pos;
     struct DNS_Header hdr;
     uint16_t net_id;
@@ -2372,27 +2404,25 @@ int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Qu
     uint16_t net_qclass;
     size_t i;
 
-    if (q == NULL || rr == NULL || rr_count == 0 || out_buf == NULL || out_len == NULL)
-    {
-        return -EINVAL;
-    }
+    if (query_header == NULL || q == NULL || rr == NULL || rr_count == 0 || out_buf == NULL || out_len == NULL)
+        abort();
 
     if (sizeof(struct DNS_Header) > out_buf_len)
     {
-        return -ENOSPC;
+        return RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
     }
 
-    ret = 0;
+    ret = RESULT_ok_void();
     pos = 0;
     memset(&hdr, 0, sizeof(hdr));
 
     /* Use the incoming query ID for consistency. */
     hdr.id = query_header->id;
     /* Manually construct response flags:
-        QR=1 (response), OPCODE=0 (standard query), AA=1 (authoritative),
-        TC=0, RD=0, RA=0, Z=0, RCODE=0.
-        RFC 1035 bit layout: QR(15) | OPCODE(14-11) | AA(10) | TC(9) | RD(8) | RA(7) | Z(6-4) | RCODE(3-0).
-        0x8500 = 1000 0101 0000 0000 (host byte order). */
+       QR=1 (response), OPCODE=0 (standard query), AA=1 (authoritative),
+       TC=0, RD=0, RA=0, Z=0, RCODE=0.
+       RFC 1035 bit layout: QR(15) | OPCODE(14-11) | AA(10) | TC(9) | RD(8) | RA(7) | Z(6-4) | RCODE(3-0).
+       0x8500 = 1000 0101 0000 0000 (host byte order). */
     hdr.flags = 0x8500;    /* Host-order response flags. */
     hdr.questions = 1;     /* Question count. */
     hdr.answer = rr_count; /* Answer count. */
@@ -2418,15 +2448,15 @@ int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Qu
     /* Write the Question section (copied from query).
         Note: q->name is dot-separated and must be label-encoded. */
     name_encoded_len = 0;
-    ret = DNS_encode_name((const char *)q->name, out_buf + pos, out_buf_len - pos, &name_encoded_len);
-    if (ret != 0)
+    ret = DNS_encode_name((UTIL_ConstString)q->name, out_buf + pos, out_buf_len - pos, &name_encoded_len);
+    if (!ret.has_value)
         goto EXIT;
     pos += name_encoded_len;
 
     /* Write qtype and qclass. (network byte order) */
     if (pos + 4 > out_buf_len)
     {
-        ret = -ENOSPC;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
     net_qtype = htons(q->qtype);
@@ -2447,11 +2477,11 @@ int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Qu
         r = &rr[i];
 
         /* 3.1 Write name using compression pointer to the Question name.
-            Compression format: top two bits 11 (0xC0), remaining 14 bits are offset.
-            Question name offset = DNS header size (12) = 0x0C. */
+           Compression format: top two bits 11 (0xC0), remaining 14 bits are offset.
+           Question name offset = DNS header size (12) = 0x0C. */
         if (pos + 2 > out_buf_len)
         {
-            ret = -ENOSPC;
+            ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
             goto EXIT;
         }
         out_buf[pos++] = 0xC0; /* Compression pointer marker. */
@@ -2460,12 +2490,12 @@ int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Qu
         /* 3.2 Write type, class, TTL, and RDLENGTH. (network byte order) */
         if (pos + 10 > out_buf_len)
         {
-            ret = -ENOSPC;
+            ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
             goto EXIT;
         }
 
         net_type = htons(r->type);
-        net_class = htons(r->class);
+        net_class = htons(r->rclass);
         net_ttl = htonl(r->ttl);
         net_rdlength = htons(r->rdlength);
 
@@ -2478,7 +2508,7 @@ int DNS_make_response(const struct DNS_Header *query_header, const struct DNS_Qu
         /* 3.3 Write RDATA. */
         if (pos + r->rdlength > out_buf_len)
         {
-            ret = -ENOSPC;
+            ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
             goto EXIT;
         }
         memcpy(out_buf + pos, r->rdata, r->rdlength);
@@ -2491,12 +2521,11 @@ EXIT:
 }
 
 /* Bind the socket SK to ADDR:PORT for the given INET_VERSION.
-   ADDR must be a string representation of the IP address.
-   Returns 0 on success, negative error code on failure. */
-int DNS_bind_socket(NET_Socket sk, const char *addr, uint16_t port, enum NET_InetVersion inet_version)
+   ADDR must be a string representation of the IP address. */
+RESULT_void DNS_bind_socket(NET_Socket sk, UTIL_ConstString addr, uint16_t port, enum NET_InetVersion inet_version)
 {
     if (addr == NULL)
-        return -EINVAL;
+        abort();
 
     if (inet_version == NET_INET_VERSION_4)
     {
@@ -2507,13 +2536,13 @@ int DNS_bind_socket(NET_Socket sk, const char *addr, uint16_t port, enum NET_Ine
         sa_in.sin_port = htons(port);
         if (inet_pton(AF_INET, addr, &sa_in.sin_addr) != 1)
         {
-            return -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            return RESULT_ERRNO_void(EXC_CATEGORY_NET);
         }
         if (bind(sk, (struct sockaddr *)&sa_in, sizeof(sa_in)) < 0)
         {
-            return -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            return RESULT_ERRNO_void(EXC_CATEGORY_NET);
         }
-        return 0;
+        return RESULT_ok_void();
     }
     else if (inet_version == NET_INET_VERSION_6)
     {
@@ -2524,48 +2553,45 @@ int DNS_bind_socket(NET_Socket sk, const char *addr, uint16_t port, enum NET_Ine
         sa_in6.sin6_port = htons(port);
         if (inet_pton(AF_INET6, addr, &sa_in6.sin6_addr) != 1)
         {
-            return -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            return RESULT_ERRNO_void(EXC_CATEGORY_NET);
         }
         if (bind(sk, (struct sockaddr *)&sa_in6, sizeof(sa_in6)) < 0)
         {
-            return -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            return RESULT_ERRNO_void(EXC_CATEGORY_NET);
         }
-        return 0;
+        return RESULT_ok_void();
     }
     else
-    {
-        return -EOPNOTSUPP;
-    }
+        abort();
+
+    return RESULT_ok_void(); /* Never reached. */
 }
 
 /* Receive a DNS query from socket SK.
-   Fills OUT_HEADER and OUT_QUESTION with the parsed data.
-   Returns 0 on success, negative error code on failure. */
-int DNS_recv_query(NET_Socket sk, struct DNS_Header *out_header, struct DNS_Question *out_question,
-                   struct NET_InetAddr *out_src_addr, uint16_t *out_src_port)
+   Fills OUT_HEADER and OUT_QUESTION with the parsed data. */
+RESULT_void DNS_recv_query(NET_Socket sk, struct DNS_Header *out_header, struct DNS_Question *out_question,
+                           struct NET_InetAddr *out_src_addr, uint16_t *out_src_port)
 {
-    int ret;
+    RESULT_void ret;
     uint8_t buf[512];
     UTIL_SignedSize recv_len;
+    RESULT_UTIL_SignedSize recv_len_res;
     size_t offset;
 
     if (out_header == NULL || out_question == NULL || out_src_addr == NULL || out_src_port == NULL)
-        return -EINVAL;
+        abort();
 
-    ret = 0;
+    ret = RESULT_ok_void();
     recv_len = 0;
 
-    recv_len = NET_recvfrom(sk, buf, sizeof(buf), 0, out_src_addr, out_src_port);
-    if (recv_len < 0)
+    recv_len_res = NET_recvfrom(sk, buf, sizeof(buf), 0, out_src_addr, out_src_port);
+    if (!recv_len_res.has_value)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
-        goto EXIT;
+        return RESULT_error_void_struct(recv_len_res.result.error);
     }
+    recv_len = recv_len_res.result.value;
     if ((size_t)recv_len < sizeof(struct DNS_Header))
-    {
-        ret = -EAGAIN; /* TODO */
-        goto EXIT;
-    }
+        return RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
 
     /* Parse DNS header. */
     DNS_fill_header(out_header, buf, (size_t)recv_len);
@@ -2573,64 +2599,63 @@ int DNS_recv_query(NET_Socket sk, struct DNS_Header *out_header, struct DNS_Ques
 
     if (out_header->questions < 1)
     {
-        ret = -EAGAIN; /* No questions present, ignore. */
-        goto EXIT;
+        /* No questions present, ignore. */
+        return RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
     }
 
     /* Parse first question only. */
     ret = DNS_parse_question(buf, (size_t)recv_len, offset, out_question);
-    if (ret != 0)
-        goto EXIT;
+    if (!ret.has_value)
+        return ret;
 
-EXIT:
     return ret;
 }
 
 /* (Ineternal) Reply to a DNS query for an IPv4 address. */
-static int DNS__reply_query4(NET_Socket sk, const struct NET_InetAddr *src_addr, const struct DNS_Header *header,
-                             const struct DNS_Question *question, const struct NET_InetAddr *reply_addr,
-                             uint16_t reply_port)
+static RESULT_void DNS__reply_query4(NET_Socket sk, const struct NET_InetAddr *src_addr,
+                                     const struct DNS_Header *header, const struct DNS_Question *question,
+                                     const struct NET_InetAddr *reply_addr, uint16_t reply_port)
 {
-    int ret;
+    RESULT_void ret;
     DNS_Inet4Addr ip_addr;
     struct DNS_ResourceRecord rr;
     uint8_t *out_buf;
     size_t out_buf_len;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     out_buf = NULL;
     ip_addr[0] = src_addr->addr.inet4[0];
     ip_addr[1] = src_addr->addr.inet4[1];
     ip_addr[2] = src_addr->addr.inet4[2];
     ip_addr[3] = src_addr->addr.inet4[3];
 
-    ret = DNS_make_A_record((const char *)question->name, ip_addr, &rr);
-    if (ret != 0)
+    ret = DNS_make_A_record((UTIL_ConstString)question->name, ip_addr, &rr);
+    if (!ret.has_value)
         goto EXIT;
 
     out_buf_len = DNS_get_response_len(question, &rr, 1);
     if (out_buf_len > 512)
     {
-        ret = -ENOSPC;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
-    out_buf = malloc(out_buf_len);
+    out_buf = (uint8_t *)malloc(out_buf_len);
     if (out_buf == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
     ret = DNS_make_response(header, (struct DNS_Question *)question, &rr, 1, out_buf, out_buf_len, &out_buf_len);
-    if (ret != 0)
+    if (!ret.has_value)
     {
         goto EXIT;
     }
 
     /* Send response back to source address. */
     ret = NET_sendto(sk, out_buf, out_buf_len, 0, reply_addr, reply_port);
-    if (ret < 0)
+    if (!ret.has_value)
     {
         goto EXIT;
     }
@@ -2642,47 +2667,47 @@ EXIT:
 }
 
 /* (Ineternal) Reply to a DNS query for an IPv6 address. */
-static int DNS__reply_query6(NET_Socket sk, const struct NET_InetAddr *src_addr, const struct DNS_Header *header,
-                             const struct DNS_Question *question, const struct NET_InetAddr *reply_addr,
-                             uint16_t reply_port)
+static RESULT_void DNS__reply_query6(NET_Socket sk, const struct NET_InetAddr *src_addr,
+                                     const struct DNS_Header *header, const struct DNS_Question *question,
+                                     const struct NET_InetAddr *reply_addr, uint16_t reply_port)
 {
-    int ret;
+    RESULT_void ret;
     DNS_Inet6Addr ip_addr;
     struct DNS_ResourceRecord rr;
     uint8_t *out_buf;
     size_t out_buf_len;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     out_buf = NULL;
     memcpy(ip_addr, src_addr->addr.inet6, sizeof(DNS_Inet6Addr));
 
-    ret = DNS_make_AAAA_record((const char *)question->name, ip_addr, &rr);
-    if (ret != 0)
+    ret = DNS_make_AAAA_record((UTIL_ConstString)question->name, ip_addr, &rr);
+    if (!ret.has_value)
         goto EXIT;
 
     out_buf_len = DNS_get_response_len(question, &rr, 1);
     if (out_buf_len > 512)
     {
-        ret = -ENOSPC;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
-    out_buf = malloc(out_buf_len);
+    out_buf = (uint8_t *)malloc(out_buf_len);
     if (out_buf == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
     ret = DNS_make_response(header, (struct DNS_Question *)question, &rr, 1, out_buf, out_buf_len, &out_buf_len);
-    if (ret != 0)
+    if (!ret.has_value)
     {
         goto EXIT;
     }
 
     /* Send response back to source address. */
     ret = NET_sendto(sk, out_buf, out_buf_len, 0, reply_addr, reply_port);
-    if (ret < 0)
+    if (!ret.has_value)
     {
         goto EXIT;
     }
@@ -2694,48 +2719,35 @@ EXIT:
 }
 
 /* Reply to a DNS query with a A/AAAA record for RECORD_ADDR with HEADER and QUESTION.
-   Sends the reply to REPLY_ADDR:REPLY_PORT.
-   Returns 0 on success, negative error code on failure. */
-int DNS_reply_query(NET_Socket sk, const struct NET_InetAddr *record_addr, const struct DNS_Header *header,
-                    const struct DNS_Question *question, const struct NET_InetAddr *reply_addr, uint16_t reply_port)
+   Sends the reply to REPLY_ADDR:REPLY_PORT. */
+RESULT_void DNS_reply_query(NET_Socket sk, const struct NET_InetAddr *record_addr, const struct DNS_Header *header,
+                            const struct DNS_Question *question, const struct NET_InetAddr *reply_addr,
+                            uint16_t reply_port)
 {
-    int ret;
-
-    ret = 0;
-
-    if (record_addr == NULL || header == NULL || question == NULL)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+    if (record_addr == NULL || header == NULL || question == NULL || reply_addr == NULL)
+        abort();
 
     if (record_addr->version == NET_INET_VERSION_4)
     {
-        ret = DNS__reply_query4(sk, record_addr, header, question, reply_addr, reply_port);
-        goto EXIT;
+        return DNS__reply_query4(sk, record_addr, header, question, reply_addr, reply_port);
     }
     else if (record_addr->version == NET_INET_VERSION_6)
     {
-        ret = DNS__reply_query6(sk, record_addr, header, question, reply_addr, reply_port);
-        goto EXIT;
+        return DNS__reply_query6(sk, record_addr, header, question, reply_addr, reply_port);
     }
     else
-    {
-        ret = -EOPNOTSUPP; /* Only IPv4 supported in this example. */
-        goto EXIT;
-    }
+        abort();
 
-EXIT:
-    return ret;
+    return RESULT_ok_void();
 }
 
 /* Reply to a DNS query with NXDOMAIN error.
-   Sends the reply to REPLY_ADDR:REPLY_PORT.
-   Returns 0 on success, negative error code on failure. */
-int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, const struct DNS_Question *question,
-                             const struct NET_InetAddr *reply_addr, uint16_t reply_port)
+   Sends the reply to REPLY_ADDR:REPLY_PORT. */
+RESULT_void DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header,
+                                     const struct DNS_Question *question, const struct NET_InetAddr *reply_addr,
+                                     uint16_t reply_port)
 {
-    int ret;
+    RESULT_void ret;
     uint8_t *out_buf;
     size_t out_buf_len;
     size_t pos;
@@ -2744,21 +2756,27 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
     size_t name_encoded_len;
     uint16_t net_qtype, net_qclass;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     out_buf = NULL;
     pos = 0;
 
-    if (sk == NET_INVALID_SOCKET || header == NULL || question == NULL || reply_addr == NULL)
-        return -EINVAL;
+    if (header == NULL || question == NULL || reply_addr == NULL || reply_addr == NULL)
+        abort();
 
     /* Header(12) + Question(name + 4) */
-    out_buf_len = sizeof(struct DNS_Header) + DNS_dns_name_encoded_len((const char *)question->name) + 4;
+    out_buf_len = sizeof(struct DNS_Header) + DNS_dns_name_encoded_len((UTIL_ConstString)question->name) + 4;
     if (out_buf_len > 512)
-        return -ENOSPC;
+    {
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
+        goto EXIT;
+    }
 
-    out_buf = malloc(out_buf_len);
+    out_buf = (uint8_t *)malloc(out_buf_len);
     if (!out_buf)
-        return -ENOMEM;
+    {
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
+        goto EXIT;
+    }
 
     /* Fill response header. */
     memset(&resp, 0, sizeof(resp));
@@ -2768,7 +2786,6 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
     resp.flags = (1 << 15) | /* QR=1 */
                  (1 << 10);  /* AA=1 */
 
-    /* Set RCODE=3 (NXDOMAIN) */
     resp.flags |= 3; /* RCODE=3 (NXDOMAIN) */
     resp.questions = 1;
     resp.answer = 0;
@@ -2793,14 +2810,14 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
 
     /* Write Question: name + qtype/qclass */
     name_encoded_len = 0;
-    ret = DNS_encode_name((const char *)question->name, out_buf + pos, out_buf_len - pos, &name_encoded_len);
-    if (ret != 0)
+    ret = DNS_encode_name((UTIL_ConstString)question->name, out_buf + pos, out_buf_len - pos, &name_encoded_len);
+    if (!ret.has_value)
         goto EXIT;
     pos += name_encoded_len;
 
-    if (pos + 4 > out_buf_len)
+    if (pos + 4 > out_buf_len) /* qtype + qclass */
     {
-        ret = -ENOSPC;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
     net_qtype = htons(question->qtype);
@@ -2811,26 +2828,56 @@ int DNS_reply_query_notfound(NET_Socket sk, const struct DNS_Header *header, con
 
     /* Send response back to source address. */
     ret = NET_sendto(sk, out_buf, pos, 0, reply_addr, reply_port);
-    if (ret < 0)
+    if (!ret.has_value)
         goto EXIT;
-
-    ret = 0;
 
 EXIT:
     free(out_buf);
     return ret;
 }
 
-#pragma region user
+#if 0
+#pragma endregion
 
-/* Get system hostname, store in *PHOSTNAME.
-    Returns 0 on success, or -sysneterror on error. Notice that *PHOSTNAME is malloc'd. */
-int USER_get_hostname(char **phostname)
+#pragma region user
+#endif
+
+/* Check if NAME is a valid hostname for FastNetworking. */
+UTIL_Bool USER_name_is_valid(UTIL_ConstString name, size_t len)
 {
-    int ret;
-    size_t bufsize;     /* Size of temp buffer for hostname. */
-    size_t hn_len;      /* Length of hostname. */
-    char *hostname_buf; /* Temp buffer for hostname. */
+    size_t i;
+
+    if (name == NULL)
+        return UTIL_FALSE;
+
+    /* 1. Check if name is empty. */
+    if (len == 0)
+        return UTIL_FALSE;
+
+    /* 3. Check if name contains space. */
+    for (i = 0; i < len; i++)
+    {
+        if (isspace((int)(unsigned char)name[i]))
+            return UTIL_FALSE;
+    }
+
+    /* 4. Only alphanumeric characters, '-' and '_' are allowed. */
+    for (i = 0; i < len; i++)
+    {
+        if (!isalnum((int)(unsigned char)name[i]) && name[i] != '-' && name[i] != '_')
+            return UTIL_FALSE;
+    }
+
+    return UTIL_TRUE;
+}
+
+/* Get system hostname, store in *PHOSTNAME. Notice that *PHOSTNAME is malloc'd. */
+RESULT_void USER_get_hostname(UTIL_StringBuffer *phostname)
+{
+    RESULT_void ret;
+    size_t bufsize;                 /* Size of temp buffer for hostname. */
+    size_t hn_len;                  /* Length of hostname. */
+    UTIL_StringBuffer hostname_buf; /* Temp buffer for hostname. */
 #if defined(_SC_HOST_NAME_MAX)
     long _hn_max;
     _hn_max = sysconf(_SC_HOST_NAME_MAX);
@@ -2841,44 +2888,49 @@ int USER_get_hostname(char **phostname)
     bufsize = 256; /* Fallback buffer size. */
 #endif
 
-    ret = 0;
+    ret = RESULT_ok_void();
     hn_len = 0;
     hostname_buf = NULL;
 
     if (phostname == NULL)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+        abort();
+
     *phostname = NULL;
 
-    hostname_buf = malloc(bufsize);
+    hostname_buf = (UTIL_StringBuffer)malloc(bufsize);
     if (hostname_buf == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
     if (gethostname(hostname_buf, bufsize) != 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
     hostname_buf[bufsize - 1] = '\0';
 
     hn_len = strlen(hostname_buf);
 
-    *phostname = malloc(hn_len + 1);
+    /* Check if hostname is valid. */
+    if (!USER_name_is_valid(hostname_buf, hn_len))
+    {
+        ret = RESULT_error_void(EFN_INVALID_HOSTNAME, EXC_CATEGORY_FN);
+        goto EXIT;
+    }
+
+    *phostname = (UTIL_StringBuffer)malloc(hn_len + 1);
     if (*phostname == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
     memcpy(*phostname, hostname_buf, hn_len + 1);
 
 EXIT:
     free(hostname_buf);
-    if (ret != 0 && phostname != NULL)
+    if (!ret.has_value)
     {
         free(*phostname);
         *phostname = NULL;
@@ -2887,7 +2939,11 @@ EXIT:
     return ret;
 }
 
+#if 0
+#pragma endregion
+
 #pragma region multicast
+#endif
 
 /* Multicast packet magic number. */
 #define MULTICAST_PACKET_MAGIC (uint16_t)(0x1145)
@@ -2912,47 +2968,47 @@ void MULTICAST_deinitialize(void)
 }
 
 /* Initialize multicast module. If error occurs, the program must be terminated. */
-int MULTICAST_initialize(void)
+RESULT_void MULTICAST_initialize(void)
 {
-    int ret;
+    RESULT_void ret;
 
-    ret = 0;
+    ret = RESULT_ok_void();
 
     /* Allocate memory for hostnames. */
     ret = UTIL_str_array_init(&g_MULTICAST_hostnames, 16);
-    if (ret != 0)
+    if (!ret.has_value)
     {
-        perror("UTIL_str_array_init");
+        LOGGING_perror("UTIL_str_array_init", ret.error);
         goto ERROR;
     }
 
     /* Get system hostname. */
     ret = USER_get_hostname(&g_MULTICAST_hostnames.arr[0]);
-    if (ret != 0)
+    if (!ret.has_value)
     {
-        perror("USER_get_hostname");
+        LOGGING_perror("USER_get_hostname", ret.error);
         goto ERROR;
     }
     g_MULTICAST_hostnames.size = 1;
 
-    return 0;
+    return ret;
 
 ERROR:
     MULTICAST_deinitialize();
-    return -EXIT_FAILURE;
+    return ret;
 }
 
 /* Initialize multicast socket for IPv4. */
-int MULTICAST_inet4_init_multicast_socket(NET_Socket sk, const char *group)
+RESULT_void MULTICAST_inet4_init_multicast_socket(NET_Socket sk, UTIL_ConstString group)
 {
-    int ret;
+    RESULT_void ret;
     struct ip_mreq mreq;
     struct sockaddr_in local_addr;
     struct ifaddrs *ifaddr, *ifa;
     struct in_addr multi_addr;
     UTIL_Bool joined;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     ifaddr = NULL;
     ifa = NULL;
     joined = UTIL_FALSE;
@@ -2964,22 +3020,21 @@ int MULTICAST_inet4_init_multicast_socket(NET_Socket sk, const char *group)
     local_addr.sin_port = htons(MULTICAST_PORT);
     if (bind(sk, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
     /* Load the multicast group address. */
-    ret = inet_pton(AF_INET, group, &multi_addr);
-    if (ret != 1)
+    if (inet_pton(AF_INET, group, &multi_addr) != 1)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
     /* Iterate all net interfaces and join the multicast group on each. */
     if (getifaddrs(&ifaddr) == -1)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
@@ -3002,17 +3057,24 @@ int MULTICAST_inet4_init_multicast_socket(NET_Socket sk, const char *group)
         mreq.imr_interface.s_addr = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
         if (setsockopt(sk, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0)
         {
+            ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
             /* Don't abort on error. */
-            LOGGING_pwarn("setsockopt(IP_ADD_MEMBERSHIP)", -EXC_get_last_error(EXC_ENTRY_SYSNET));
+            LOGGING_warn("Error joining multicast group on interface %s: %s", ifa->ifa_name,
+                         EXC_strerror(EXC_get_last_error(EXC_CATEGORY_NET)));
+            LOGGING_pwarn("setsockopt(IP_ADD_MEMBERSHIP)", EXC_get_last_error(EXC_CATEGORY_NET));
         }
         else
+        {
+            ret = RESULT_ok_void();
+            LOGGING_debug("Joined IPv4 multicast group on interface: %s", ifa->ifa_name);
             joined = UTIL_TRUE;
+        }
     }
 
     if (!joined)
     {
         /* No interfaces joined the multicast group. */
-        ret = -EADDRNOTAVAIL;
+        ret = RESULT_error_void(EFN_NO_MULTICAST_JOINED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
@@ -3023,17 +3085,16 @@ EXIT:
 }
 
 /* Initialize multicast socket for IPv6. */
-int MULTICAST_inet6_init_multicast_socket(NET_Socket sk, const char *group)
+RESULT_void MULTICAST_inet6_init_multicast_socket(NET_Socket sk, UTIL_ConstString group)
 {
-    int ret;
+    RESULT_void ret;
     struct ipv6_mreq mreq6;
     struct sockaddr_in6 local_addr6;
     struct ifaddrs *ifaddr, *ifa;
     struct in6_addr multi_addr6;
     UTIL_Bool joined;
-    struct sockaddr_in6 *sa6;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     ifaddr = NULL;
     ifa = NULL;
     joined = UTIL_FALSE;
@@ -3047,22 +3108,21 @@ int MULTICAST_inet6_init_multicast_socket(NET_Socket sk, const char *group)
 
     if (bind(sk, (struct sockaddr *)&local_addr6, sizeof(local_addr6)) < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
     /* Load the multicast group address. */
-    ret = inet_pton(AF_INET6, group, &multi_addr6);
-    if (ret != 1)
+    if (inet_pton(AF_INET6, group, &multi_addr6) != 1)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
     /* Iterate all net interfaces and join the multicast group on each. */
     if (getifaddrs(&ifaddr) == -1)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
@@ -3076,47 +3136,44 @@ int MULTICAST_inet6_init_multicast_socket(NET_Socket sk, const char *group)
             continue;
         if (!(ifa->ifa_flags & IFF_MULTICAST))
             continue;
-
-        /* Check for special IPv6 addresses */
-        sa6 = (struct sockaddr_in6 *)ifa->ifa_addr;
-
-        /* Skip loopback address (::1) */
-        if (IN6_IS_ADDR_LOOPBACK(&sa6->sin6_addr))
+        if (IN6_IS_ADDR_LOOPBACK(&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr) ||
+            IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr))
             continue;
-
-        /* Skip unspecified address (::) */
-        if (IN6_IS_ADDR_UNSPECIFIED(&sa6->sin6_addr))
-            continue;
-
-        /* Skip link-local addresses (fe80::/10) if desired */
-        if (IN6_IS_ADDR_LINKLOCAL(&sa6->sin6_addr))
-            continue; /* Optional: you might want to keep this */
 
         /* Prepare IPv6 multicast membership request. */
         memcpy(&mreq6.ipv6mr_multiaddr, &multi_addr6, sizeof(mreq6.ipv6mr_multiaddr));
 
-        /* Use interface index instead of IP address for IPv6 */
+        /* Use interface index instead of IP address for IPv6. */
         mreq6.ipv6mr_interface = if_nametoindex(ifa->ifa_name);
         if (mreq6.ipv6mr_interface == 0)
         {
-            /* Failed to get interface index, skip this interface */
-            LOGGING_pwarn("if_nametoindex", -EXC_get_last_error(EXC_ENTRY_SYSNET));
+            ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
+            LOGGING_warn("Error joining multicast group on interface %s: %s", ifa->ifa_name,
+                         EXC_strerror(EXC_get_last_error(EXC_CATEGORY_NET)));
+            LOGGING_pwarn("if_nametoindex (IPv6)", EXC_get_last_error(EXC_CATEGORY_NET));
             continue;
         }
 
         if (setsockopt(sk, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq6, sizeof(mreq6)) < 0)
         {
             /* Don't abort on error. */
-            LOGGING_pwarn("setsockopt(IPV6_JOIN_GROUP)", -EXC_get_last_error(EXC_ENTRY_SYSNET));
+            ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
+            LOGGING_warn("Error joining multicast group on interface %s: %s", ifa->ifa_name,
+                         EXC_strerror(EXC_get_last_error(EXC_CATEGORY_NET)));
+            LOGGING_pwarn("setsockopt(IPV6_JOIN_GROUP)", EXC_get_last_error(EXC_CATEGORY_NET));
         }
         else
+        {
+            ret = RESULT_ok_void();
+            LOGGING_debug("Joined IPv6 multicast group on interface: %s", ifa->ifa_name);
             joined = UTIL_TRUE;
+        }
     }
 
     if (!joined)
     {
         /* No interfaces joined the multicast group. */
-        ret = -EADDRNOTAVAIL;
+        ret = RESULT_error_void(EFN_NO_MULTICAST_JOINED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
@@ -3181,10 +3238,10 @@ void MULTICAST_unpack_boardcast_header(uint64_t packed, struct MULTICAST_Boardca
 }
 
 /* Send a multicast packet with type TYPE and data DATA of length DATA_LEN. */
-int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t data_len,
-                          enum NET_InetVersion inet_version)
+RESULT_void MULTICAST_send_packet(NET_Socket sk, uint16_t type, UTIL_ConstString data, size_t data_len,
+                                  enum NET_InetVersion inet_version)
 {
-    int ret;
+    RESULT_void ret;
     uint8_t *buf;
     struct MULTICAST_BoardcastHeader header;
     uint64_t packed_header;
@@ -3192,19 +3249,16 @@ int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t
     socklen_t addr_len;
     UTIL_SignedSize sent;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     buf = NULL;
     memset(&addr, 0, sizeof(addr));
 
-    if (sk == NET_INVALID_SOCKET || data == NULL || data_len == 0)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+    if (data == NULL || data_len == 0)
+        abort();
 
     if (data_len > 65535)
     {
-        ret = -E2BIG;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
 
@@ -3214,10 +3268,10 @@ int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t
     header.type = type;
     packed_header = MULTICAST_pack_boardcast_header(header);
 
-    buf = malloc(sizeof(packed_header) + data_len);
+    buf = (uint8_t *)malloc(sizeof(packed_header) + data_len);
     if (buf == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
@@ -3233,7 +3287,7 @@ int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t
         addr_in->sin_port = htons(MULTICAST_PORT);
         if (inet_pton(AF_INET, MULTICAST_ADDR, &addr_in->sin_addr) != 1)
         {
-            ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
             goto EXIT;
         }
         addr_len = sizeof(struct sockaddr_in);
@@ -3247,29 +3301,25 @@ int MULTICAST_send_packet(NET_Socket sk, uint16_t type, const char *data, size_t
         addr_in6->sin6_port = htons(MULTICAST_PORT);
         if (inet_pton(AF_INET6, MULTICAST_ADDR6, &addr_in6->sin6_addr) != 1)
         {
-            ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+            ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
             goto EXIT;
         }
         addr_in6->sin6_scope_id = 0;
         addr_len = sizeof(struct sockaddr_in6);
     }
     else
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+        abort();
 
     sent = sendto(sk, buf, sizeof(packed_header) + data_len, 0, (struct sockaddr *)&addr, addr_len);
-
     if (sent < 0)
     {
-        if (NET_kern_buffer_is_full(-EXC_get_last_error(EXC_ENTRY_SYSNET)))
+        if (NET_kern_buffer_is_full(EXC_get_last_error(EXC_CATEGORY_NET)))
         {
-            printf("Warning: Kernel buffer full, multicast packet dropped.\n");
-            ret = -EAGAIN;
+            LOGGING_warn("Kernel buffer full, multicast packet dropped.");
+            ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
             goto EXIT;
         }
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
 
@@ -3279,35 +3329,48 @@ EXIT:
 }
 
 /* Send a boardcast packet with hostname HOSTNAME of length LENGTH. */
-#define MULTICAST_send_boardcast(sk, hostname, length, inet_version)                                                   \
-    MULTICAST_send_packet(sk, MULTICAST_TYPE_BOARDCAST, hostname, length, inet_version)
+RESULT_void MULTICAST_send_boardcast(NET_Socket sk, UTIL_ConstString hostname, size_t length,
+                                     enum NET_InetVersion inet_version)
+{
+    return MULTICAST_send_packet(sk, MULTICAST_TYPE_BOARDCAST, hostname, length, inet_version);
+}
 
 /* Send a request packet with hostname HOSTNAME of length LENGTH. */
-#define MULTICAST_send_request(sk, hostname, length, inet_version)                                                     \
-    MULTICAST_send_packet(sk, MULTICAST_TYPE_REQUEST, hostname, length, inet_version)
+RESULT_void MULTICAST_send_request(NET_Socket sk, UTIL_ConstString hostname, size_t length,
+                                   enum NET_InetVersion inet_version)
+{
+    return MULTICAST_send_packet(sk, MULTICAST_TYPE_REQUEST, hostname, length, inet_version);
+}
 
 /* Send an offline notice packet with hostname HOSTNAME of length LENGTH. */
-#define MULTICAST_send_offline(sk, hostname, length, inet_version)                                                     \
-    MULTICAST_send_packet(sk, MULTICAST_TYPE_OFFLINE, hostname, length, inet_version)
+RESULT_void MULTICAST_send_offline(NET_Socket sk, UTIL_ConstString hostname, size_t length,
+                                   enum NET_InetVersion inet_version)
+{
+    return MULTICAST_send_packet(sk, MULTICAST_TYPE_OFFLINE, hostname, length, inet_version);
+}
 
 /* Send a refuse packet with hostname HOSTNAME of length LENGTH. */
-#define MULTICAST_send_refuse(sk, hostname, length, inet_version)                                                      \
-    MULTICAST_send_packet(sk, MULTICAST_TYPE_REFUSE, hostname, length, inet_version)
+RESULT_void MULTICAST_send_refuse(NET_Socket sk, UTIL_ConstString hostname, size_t length,
+                                  enum NET_InetVersion inet_version)
+{
+    return MULTICAST_send_packet(sk, MULTICAST_TYPE_REFUSE, hostname, length, inet_version);
+}
 
 /* Boardcast all hostnames in g_MULTICAST_hostnames via socket SK. */
-int MULTICAST_boardcast_self(NET_Socket sk, enum NET_InetVersion inet_version)
+RESULT_void MULTICAST_boardcast_self(NET_Socket sk, enum NET_InetVersion inet_version)
 {
-    int ret;
+    RESULT_void ret;
     size_t i;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     i = 0;
 
     while (i < g_MULTICAST_hostnames.size)
     {
+        LOGGING_debug("Boardcasting hostname: %s", g_MULTICAST_hostnames.arr[i]);
         ret = MULTICAST_send_boardcast(sk, g_MULTICAST_hostnames.arr[i], strlen(g_MULTICAST_hostnames.arr[i]),
                                        inet_version);
-        if (ret < 0)
+        if (!ret.has_value)
         {
             goto EXIT;
         }
@@ -3319,19 +3382,19 @@ EXIT:
 }
 
 /* Boardcast all hostnames in g_MULTICAST_hostnames via socket SK as offline notice. */
-int MULTICAST_offline_self(NET_Socket sk, enum NET_InetVersion inet_version)
+RESULT_void MULTICAST_offline_self(NET_Socket sk, enum NET_InetVersion inet_version)
 {
-    int ret;
+    RESULT_void ret;
     size_t i;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     i = 0;
 
     while (i < g_MULTICAST_hostnames.size)
     {
         ret = MULTICAST_send_offline(sk, g_MULTICAST_hostnames.arr[i], strlen(g_MULTICAST_hostnames.arr[i]),
                                      inet_version);
-        if (ret < 0)
+        if (!ret.has_value)
         {
             goto EXIT;
         }
@@ -3343,42 +3406,45 @@ EXIT:
 }
 
 /* Receive a boardcast packet from socket SK into DATA of length LEN. The received hostname will be stored in
-   OUT_HEADER. The source address of the packet will be stored in OUT_SRC_ADDR. Returns 0 on success, or a negative
-   error code on failure.
- */
-int MULTICAST_recv_boardcast(NET_Socket sk, char *data, size_t *len, struct MULTICAST_BoardcastHeader *out_header,
-                             struct NET_InetAddr *out_src_addr)
+   OUT_HEADER. The source address of the packet will be stored in OUT_SRC_ADDR. */
+RESULT_void MULTICAST_recv_boardcast(NET_Socket sk, UTIL_StringBuffer data, size_t *len,
+                                     struct MULTICAST_BoardcastHeader *out_header, struct NET_InetAddr *out_src_addr)
 {
-    int ret;
+    RESULT_void ret;
     uint64_t packed_header;
     UTIL_SignedSize recv_len;
     uint8_t buf[MULTICAST_BOARDCAST_HEADER_SIZE + MULTICAST_MAX_DOMAIN_LEN];
     struct sockaddr_storage addr;
     socklen_t addr_len;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     addr_len = sizeof(addr);
 
-    if (sk == NET_INVALID_SOCKET || data == NULL || len == NULL || out_header == NULL || out_src_addr == NULL)
-    {
+    if (data == NULL || len == NULL || out_header == NULL || out_src_addr == NULL)
         abort();
-    }
 
     recv_len = recvfrom(sk, buf, sizeof(buf), 0, (struct sockaddr *)&addr, &addr_len);
     if (recv_len == 0)
     {
-        ret = -EAGAIN; /* TODO */
+        LOGGING_warn("Received zero-length multicast packet, ignoring.");
+        ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
         goto EXIT;
     }
     if (recv_len < 0)
     {
-        ret = -EXC_get_last_error(EXC_ENTRY_SYSNET);
+        /* Convert EAGAIN. */
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
+            goto EXIT;
+        }
+        ret = RESULT_ERRNO_void(EXC_CATEGORY_NET);
         goto EXIT;
     }
     if ((size_t)recv_len < sizeof(packed_header))
     {
         LOGGING_warn("Received multicast packet too small (%d < %d), ignoring.", recv_len, sizeof(packed_header));
-        ret = -EAGAIN; /* TODO */
+        ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
         goto EXIT;
     }
     /* Now packed header is at least sizeof(packed_header), so we can memcpy it safely. */
@@ -3389,19 +3455,19 @@ int MULTICAST_recv_boardcast(NET_Socket sk, char *data, size_t *len, struct MULT
     if (out_header->magic != MULTICAST_PACKET_MAGIC)
     {
         /* Ignore other versions packet. */
-        ret = -EAGAIN;
+        ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
         goto EXIT;
     }
     if (out_header->version != MULTICAST_VERSION) /* Version */
     {
         /* Ignore other versions packet. */
-        ret = -EAGAIN;
+        ret = RESULT_error_void(EFN_TRY_AGAIN, EXC_CATEGORY_FN);
         goto EXIT;
     }
     if ((size_t)recv_len < sizeof(packed_header) + out_header->length || out_header->length == 0 ||
         out_header->length >= MULTICAST_MAX_DOMAIN_LEN)
     {
-        ret = -EINVAL;
+        ret = RESULT_error_void(EFN_MAX_CAPACITY_EXCEEDED, EXC_CATEGORY_FN);
         goto EXIT;
     }
     /* Now hostname is at least header.length, so we can memcpy it safely. */
@@ -3416,18 +3482,22 @@ EXIT:
 }
 
 /* Check if HOSTNAME is in g_MULTICAST_hostnames. */
-UTIL_Bool MULTICAST_boardcast_is_for_me(const char *hostname)
+UTIL_Bool MULTICAST_boardcast_is_for_me(UTIL_ConstString hostname)
 {
     return UTIL_str_in_array(hostname, &g_MULTICAST_hostnames);
 }
 
+#if 0
+#pragma endregion
+
 #pragma region config
+#endif
 
 /* Configuration entry types. */
 enum CONFIG_ConfigEntryType
 {
-    /* Invalid type. */
     CONFIG_CONFIG_ENTRY_TYPE_INVALID = -1,
+
     /* String type. */
     CONFIG_CONFIG_ENTRY_TYPE_STRING = 1,
     /* Integer type. */
@@ -3440,11 +3510,11 @@ struct CONFIG_ConfigEntry
     /* Configuration entry type. */
     enum CONFIG_ConfigEntryType type;
     /* Configuration entry key. */
-    char *key;
+    UTIL_StringBuffer key;
     /* Configuration entry value. */
     union {
-        char *str_val;
-        UTIL_SignedSize int_val;
+        UTIL_StringBuffer str_val;
+        uint64_t int_val;
     } value;
 };
 
@@ -3482,104 +3552,103 @@ enum CONFIG_FastNetworkingOptions
     OPT_MAX
 };
 
-/* Number of configuration entries. */
-#define CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT (size_t)OPT_MAX
-
 /* (Internal) Global configuration entries array. */
-static struct CONFIG_ConfigEntry g_FN_config_entries[CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT];
+static struct CONFIG_ConfigEntry g_FN_config_entries[(size_t)OPT_MAX];
 
-static char *CONFIG__strdup(const char *src)
-{
-    char *res;
-
-    res = UTIL_strdup(src);
-    if (res == NULL)
-    {
-        perror("UTIL_strdup");
-        exit(EXIT_FAILURE);
-    }
-
-    return res;
-}
-
-/* Initialize configuration entries with default values. */
-void CONFIG_initialize()
-{
-    memset(g_FN_config_entries, 0, sizeof(g_FN_config_entries));
-
-    /* Set default values. */
-    g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].key = CONFIG__strdup("MulticastIPv4Address");
-    g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].value.str_val = CONFIG__strdup(MULTICAST_ADDR);
-
-    g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].key = CONFIG__strdup("MulticastIPv6Address");
-    g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].value.str_val = CONFIG__strdup(MULTICAST_ADDR6);
-
-    g_FN_config_entries[OPT_MULTICAST_PORT].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
-    g_FN_config_entries[OPT_MULTICAST_PORT].key = CONFIG__strdup("MulticastPort");
-    g_FN_config_entries[OPT_MULTICAST_PORT].value.int_val = MULTICAST_PORT;
-
-    g_FN_config_entries[OPT_DNS_IPV4_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_DNS_IPV4_ADDR].key = CONFIG__strdup("DNSServerIPv4Address");
-    g_FN_config_entries[OPT_DNS_IPV4_ADDR].value.str_val = CONFIG__strdup(DNS_ADDR4);
-
-    g_FN_config_entries[OPT_DNS_IPV6_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_DNS_IPV6_ADDR].key = CONFIG__strdup("DNSServerIPv6Address");
-    g_FN_config_entries[OPT_DNS_IPV6_ADDR].value.str_val = CONFIG__strdup(DNS_ADDR6);
-
-    g_FN_config_entries[OPT_LOGGING_LEVEL].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
-    g_FN_config_entries[OPT_LOGGING_LEVEL].key = CONFIG__strdup("LoggingLevel");
-    g_FN_config_entries[OPT_LOGGING_LEVEL].value.int_val = LOG_LEVEL_INFO;
-
-    g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
-    g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].key = CONFIG__strdup("MulticastBoardcastIntervalMS");
-    g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].value.int_val = MULTICAST_BOARDCAST_INTERVAL_MS;
-
-    g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].key = CONFIG__strdup("LoggingFormatDebug");
-    g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].value.str_val = CONFIG__strdup("[%1] %2");
-
-    g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].key = CONFIG__strdup("LoggingFormatInfo");
-    g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].value.str_val = CONFIG__strdup("[%1] %2");
-
-    g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].key = CONFIG__strdup("LoggingFormatWarn");
-    g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].value.str_val = CONFIG__strdup("[%1] %2");
-
-    g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
-    g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].key = CONFIG__strdup("LoggingFormatError");
-    g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].value.str_val = CONFIG__strdup("[%1] %2");
-}
+#define CONFIG__strdup_unwrap(save_to, str)                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        (save_to) = UTIL_strdup((str));                                                                                \
+        err = EXC_get_last_error(EXC_CATEGORY_LIBC);                                                                   \
+        if ((save_to) == NULL)                                                                                         \
+        {                                                                                                              \
+            LOGGING_perror("UTIL_strdup.", err);                                                                       \
+            goto FAIL;                                                                                                 \
+        }                                                                                                              \
+    } while (0)
 
 /* Deinitialize configuration entries and free allocated memory. */
 void CONFIG_deinitialize()
 {
     size_t i;
 
-    for (i = 0; i < CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT; i++)
+    for (i = 0; i < (size_t)OPT_MAX; i++)
     {
         CONFIG_free_config_entry(&g_FN_config_entries[i]);
     }
     memset(g_FN_config_entries, 0, sizeof(g_FN_config_entries));
 }
 
-/* Set a configuration entry OPT to ENTRY. Notice that this function copy the ENTRY's key and value. Return 0 on
-   success, or a negative error code on failure. if you don't want to set the key, set it to NULL. */
-int CONFIG_set_config(enum CONFIG_FastNetworkingOptions opt, struct CONFIG_ConfigEntry *entry)
+/* Initialize configuration entries with default values. */
+RESULT_void CONFIG_initialize()
 {
-    int ret;
-    char *old_key;
+    struct EXC_ErrorCode err;
 
-    ret = 0;
+    err = RESULT_ok_void().error;
+    memset(g_FN_config_entries, 0, sizeof(g_FN_config_entries));
+
+    /* Set default values. */
+    g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].key, "MulticastIPv4Address");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_IPV4_ADDR].value.str_val, MULTICAST_ADDR);
+
+    g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].key, "MulticastIPv6Address");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_IPV6_ADDR].value.str_val, MULTICAST_ADDR6);
+
+    g_FN_config_entries[OPT_MULTICAST_PORT].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_PORT].key, "MulticastPort");
+    g_FN_config_entries[OPT_MULTICAST_PORT].value.int_val = MULTICAST_PORT;
+
+    g_FN_config_entries[OPT_DNS_IPV4_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_DNS_IPV4_ADDR].key, "DNSServerIPv4Address");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_DNS_IPV4_ADDR].value.str_val, DNS_ADDR4);
+
+    g_FN_config_entries[OPT_DNS_IPV6_ADDR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_DNS_IPV6_ADDR].key, "DNSServerIPv6Address");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_DNS_IPV6_ADDR].value.str_val, DNS_ADDR6);
+
+    g_FN_config_entries[OPT_LOGGING_LEVEL].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_LEVEL].key, "LoggingLevel");
+    g_FN_config_entries[OPT_LOGGING_LEVEL].value.int_val = LOG_LEVEL_INFO;
+
+    g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].type = CONFIG_CONFIG_ENTRY_TYPE_INT;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].key, "MulticastBoardcastIntervalMS");
+    g_FN_config_entries[OPT_MULTICAST_BOARDCAST_INTERVAL_MS].value.int_val = MULTICAST_BOARDCAST_INTERVAL_MS;
+
+    g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].key, "LoggingFormatDebug");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_DEBUG].value.str_val, "[%1] %2");
+
+    g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].key, "LoggingFormatInfo");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_INFO].value.str_val, "[%1] %2");
+
+    g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].key, "LoggingFormatWarn");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_WARN].value.str_val, "[%1] %2");
+
+    g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].key, "LoggingFormatError");
+    CONFIG__strdup_unwrap(g_FN_config_entries[OPT_LOGGING_FORMAT_ERROR].value.str_val, "[%1] %2");
+
+    return RESULT_ok_void();
+
+FAIL:
+    CONFIG_deinitialize();
+    return RESULT_error_void_struct(err);
+}
+
+/* Set a configuration entry OPT to ENTRY. Notice that this function copy the ENTRY's key and value.
+   if you don't want to set the key, set it to NULL. */
+RESULT_void CONFIG_set_config(enum CONFIG_FastNetworkingOptions opt, struct CONFIG_ConfigEntry *entry)
+{
+    UTIL_StringBuffer old_key;
+
     old_key = NULL;
 
-    if (opt < 0 || (size_t)opt >= CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT || entry == NULL)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+    if (opt <= OPT_INVALID || opt >= OPT_MAX || entry == NULL)
+        abort();
 
     old_key = g_FN_config_entries[opt].key;
     g_FN_config_entries[opt].key = NULL; /* Don't free the old key because it may be recovered. */
@@ -3590,8 +3659,7 @@ int CONFIG_set_config(enum CONFIG_FastNetworkingOptions opt, struct CONFIG_Confi
         g_FN_config_entries[opt].key = UTIL_strdup(entry->key);
         if (g_FN_config_entries[opt].key == NULL)
         {
-            ret = -ENOMEM;
-            goto EXIT;
+            return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         }
     }
     else
@@ -3604,8 +3672,7 @@ int CONFIG_set_config(enum CONFIG_FastNetworkingOptions opt, struct CONFIG_Confi
         g_FN_config_entries[opt].value.str_val = UTIL_strdup(entry->value.str_val);
         if (g_FN_config_entries[opt].value.str_val == NULL)
         {
-            ret = -ENOMEM;
-            goto EXIT;
+            return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
         }
     }
     else
@@ -3613,27 +3680,21 @@ int CONFIG_set_config(enum CONFIG_FastNetworkingOptions opt, struct CONFIG_Confi
         g_FN_config_entries[opt].value.int_val = entry->value.int_val;
     }
 
-    ret = 0;
-EXIT:
-    return ret;
+    return RESULT_ok_void();
 }
 
-/* Set a configuration entry from KEY to ENTRY. Notice that this function copy the ENTRY's key and value. Return 0 on
-   success, or a negative error code on failure. */
-int CONFIG_set_config_from_key(const char *key, struct CONFIG_ConfigEntry *entry)
+/* Set a configuration entry from KEY to ENTRY. Notice that this function copy the ENTRY's key and value. */
+RESULT_void CONFIG_set_config_from_key(UTIL_ConstString key, struct CONFIG_ConfigEntry *entry)
 {
-    int ret;
     size_t i;
+    RESULT_void ret;
 
-    ret = -EINVAL; /* Not found by default. */
+    ret = RESULT_ok_void();
 
     if (key == NULL || entry == NULL)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+        abort();
 
-    for (i = 0; i < CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT; i++)
+    for (i = 0; i < (size_t)OPT_MAX; i++)
     {
         if (strcmp(g_FN_config_entries[i].key, key) == 0)
         {
@@ -3646,11 +3707,11 @@ EXIT:
     return ret;
 }
 
-static enum CONFIG_ConfigEntryType CONFIG__get_entry_type_from_key(const char *key)
+static enum CONFIG_ConfigEntryType CONFIG__get_entry_type_from_key(UTIL_ConstString key)
 {
     size_t i;
 
-    for (i = 0; i < CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT; i++)
+    for (i = 0; i < (size_t)OPT_MAX; i++)
     {
         if (strcmp(g_FN_config_entries[i].key, key) == 0)
         {
@@ -3661,13 +3722,11 @@ static enum CONFIG_ConfigEntryType CONFIG__get_entry_type_from_key(const char *k
     return CONFIG_CONFIG_ENTRY_TYPE_INVALID; /* Not found. */
 }
 
-static int CONFIG__read_until_space(FILE *file, char *out_buf, size_t buf_size)
+static RESULT_void CONFIG__read_until_space(FILE *file, UTIL_StringBuffer out_buf, size_t buf_size)
 {
-    int ret;
     size_t pos;
     int c;
 
-    ret = 0;
     pos = 0;
     c = EOF;
 
@@ -3678,8 +3737,7 @@ static int CONFIG__read_until_space(FILE *file, char *out_buf, size_t buf_size)
         {
             if (ferror(file))
             {
-                ret = -EXC_get_last_error(EXC_ENTRY_LIBC);
-                goto EXIT;
+                return RESULT_ERRNO_void(EXC_CATEGORY_LIBC);
             }
             break; /* EOF reached. */
         }
@@ -3691,43 +3749,27 @@ static int CONFIG__read_until_space(FILE *file, char *out_buf, size_t buf_size)
     }
     out_buf[pos] = '\0';
 
-EXIT:
-    return ret;
+    return RESULT_ok_void();
 }
 
-static UTIL_SignedSize CONFIG__parse_int_value(FILE *file)
+static RESULT_uint64_t CONFIG__parse_int_value(FILE *file)
 {
-    UTIL_SignedSize ret;
+    RESULT_void ret;
     char buffer[10];
-    size_t i;
 
-    ret = 0;
     memset(buffer, 0, sizeof(buffer));
 
-    ret = (UTIL_SignedSize)CONFIG__read_until_space(file, buffer, sizeof(buffer));
-    if (ret < 0)
+    ret = CONFIG__read_until_space(file, buffer, sizeof(buffer));
+    if (!ret.has_value)
     {
-        goto EXIT;
+        return RESULT_error_uint64_t_struct(ret.error);
     }
 
     /* Convert string string to int. */
-    ret = 0;
-    for (i = 0; i < strlen(buffer); i++)
-    {
-        if (!isdigit((unsigned char)buffer[i]))
-        {
-            ret = -EINVAL;
-            LOGGING_error("Invalid integer value: %s", buffer);
-            goto EXIT;
-        }
-        ret = ret * 10 + (buffer[i] - '0');
-    }
-
-EXIT:
-    return ret;
+    return UTIL_str_to_unsigned_base10(buffer);
 }
 
-static void CONFIG__strip(const char *from, char *to, size_t to_size)
+static void CONFIG__strip(UTIL_ConstString from, UTIL_StringBuffer to, size_t to_size)
 {
     size_t start;
     size_t i;
@@ -3745,16 +3787,15 @@ static void CONFIG__strip(const char *from, char *to, size_t to_size)
     }
 }
 
-static int CONFIG__parse_config(FILE *file)
+static RESULT_void CONFIG__parse_config(FILE *file)
 {
-    int ret;
+    RESULT_void ret;
     char key_buf_raw[64];
     char key_buf[64];
     char value_buf_raw[256];
     char value_buf[256];
     UTIL_Bool in_key;
 
-    ret = 0;
     memset(key_buf_raw, 0, sizeof(key_buf_raw));
     memset(key_buf, 0, sizeof(key_buf));
     memset(value_buf_raw, 0, sizeof(value_buf_raw));
@@ -3766,9 +3807,9 @@ static int CONFIG__parse_config(FILE *file)
     {
         ret = CONFIG__read_until_space(file, in_key ? key_buf_raw : value_buf_raw,
                                        in_key ? sizeof(key_buf_raw) : sizeof(value_buf_raw));
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            goto EXIT;
+            return ret;
         }
 
         if (in_key)
@@ -3805,43 +3846,36 @@ static int CONFIG__parse_config(FILE *file)
                 }
                 else if (expected_type == CONFIG_CONFIG_ENTRY_TYPE_INT)
                 {
-                    UTIL_SignedSize int_val;
+                    RESULT_uint64_t int_val;
 
-                    int_val = 0;
                     int_val = CONFIG__parse_int_value(file);
-                    if (int_val < 0)
+                    if (!int_val.has_value)
                     {
-                        ret = (int)int_val;
                         LOGGING_error("Failed to parse integer value for key %s", key_buf);
-                        goto EXIT;
+                        return RESULT_error_void_struct(int_val.result.error);
                     }
-                    entry.value.int_val = (int)int_val;
+                    entry.value.int_val = int_val.result.value;
                 }
                 else
-                {
-                    ret = -EINVAL;
-                    LOGGING_error("Invalid configuration entry type for key %s", key_buf);
-                    goto EXIT;
-                }
+                    abort();
 
                 ret = CONFIG_set_config_from_key(key_buf, &entry);
-                if (ret < 0)
+                if (!ret.has_value)
                 {
                     LOGGING_error("Failed to set configuration entry for key %s", key_buf);
-                    goto EXIT;
+                    return ret;
                 }
             }
         }
     }
 
-EXIT:
-    return ret;
+    return RESULT_ok_void();
 }
 
 /* Load configuration entries from a file. */
-void CONFIG_load_from_file(const char *filename)
+void CONFIG_load_from_file(UTIL_ConstString filename)
 {
-    int ret;
+    RESULT_void ret;
     FILE *file;
 
     LOGGING_debug("Loading configuration from file: %s", filename);
@@ -3849,15 +3883,15 @@ void CONFIG_load_from_file(const char *filename)
     file = fopen(filename, "r");
     if (file == NULL)
     {
-        LOGGING_perror("CONFIG_load_from_file: fopen", -EXC_get_last_error(EXC_ENTRY_LIBC));
+        LOGGING_perror("fopen", EXC_get_last_error(EXC_CATEGORY_LIBC));
         return;
     }
 
     ret = CONFIG__parse_config(file);
-    if (ret < 0)
+    if (!ret.has_value)
     {
         LOGGING_error("Failed to parse configuration file %s", filename);
-        LOGGING_perror("CONFIG_load_from_file: CONFIG__parse_config", ret);
+        LOGGING_perror("CONFIG_load_from_file: CONFIG__parse_config", ret.error);
         goto EXIT;
     }
 
@@ -3886,33 +3920,27 @@ void CONFIG_load()
 }
 
 /* Get a configuration entry as string by KEY. */
-const char *CONFIG_get_as_str(enum CONFIG_FastNetworkingOptions key)
+RESULT_UTIL_ConstString CONFIG_get_as_str(enum CONFIG_FastNetworkingOptions key)
 {
-    if (key < 0 || (size_t)key >= CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT)
-    {
+    if ((size_t)key < (size_t)0 || (size_t)key >= (size_t)OPT_MAX)
         abort();
-    }
+
     if (g_FN_config_entries[key].type != CONFIG_CONFIG_ENTRY_TYPE_STRING)
-    {
-        LOGGING_error("CONFIG_get_as_str: Key %s is not a string type", g_FN_config_entries[key].key);
-        exit(EXIT_FAILURE);
-    }
-    return g_FN_config_entries[key].value.str_val;
+        abort();
+
+    return RESULT_ok_UTIL_ConstString(g_FN_config_entries[key].value.str_val);
 }
 
 /* Get a configuration entry as integer by KEY. */
-UTIL_SignedSize CONFIG_get_as_int(enum CONFIG_FastNetworkingOptions key)
+RESULT_uint64_t CONFIG_get_as_int(enum CONFIG_FastNetworkingOptions key)
 {
-    if (key < 0 || (size_t)key >= CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT)
-    {
+    if ((size_t)key < (size_t)0 || (size_t)key >= (size_t)OPT_MAX)
         abort();
-    }
+
     if (g_FN_config_entries[key].type != CONFIG_CONFIG_ENTRY_TYPE_INT)
-    {
-        LOGGING_error("CONFIG_get_as_int: Key %s is not an integer type", g_FN_config_entries[key].key);
-        exit(EXIT_FAILURE);
-    }
-    return (UTIL_SignedSize)g_FN_config_entries[key].value.int_val;
+        abort();
+
+    return RESULT_ok_uint64_t(g_FN_config_entries[key].value.int_val);
 }
 
 /* A configuration entry iterator. */
@@ -3929,35 +3957,94 @@ typedef struct CONFIG_ConfigEntry *CONFIG_ConfigEntryIter;
     } while (0)
 
 /* Check if the configuration entry iterator has reached the end. */
-#define CONFIG_iter_is_end(iter)                                                                                       \
-    ((size_t)((iter) - &g_FN_config_entries[0]) >= CONFIG_FAST_NETWORKING_CONFIG_ENTRIES_COUNT)
+#define CONFIG_iter_is_end(iter) ((size_t)((iter) - &g_FN_config_entries[0]) >= OPT_MAX)
+
+#if 0
+#pragma endregion
 
 #pragma region main
+#endif
+
+static RESULT_void FN__apply_logging_settings()
+{
+    enum LOGGING_LogLevel log_level;
+    RESULT_uint64_t log_level_res;
+    RESULT_UTIL_ConstString fmt_res;
+
+    log_level_res = CONFIG_get_as_int(OPT_LOGGING_LEVEL);
+    if (!log_level_res.has_value)
+    {
+        return RESULT_error_void_struct(log_level_res.result.error);
+    }
+    log_level = (enum LOGGING_LogLevel)log_level_res.result.value;
+    if (!LOGGING_is_valid_level(log_level))
+    {
+        LOGGING_error("Invalid logging level %d", log_level);
+        abort();
+    }
+    LOGGING_set_level(log_level);
+
+    fmt_res = CONFIG_get_as_str(OPT_LOGGING_FORMAT_DEBUG);
+    if (!fmt_res.has_value)
+    {
+        return RESULT_error_void_struct(fmt_res.result.error);
+    }
+    LOGGING_set_format(LOG_LEVEL_DEBUG, fmt_res.result.value);
+    fmt_res = CONFIG_get_as_str(OPT_LOGGING_FORMAT_INFO);
+    if (!fmt_res.has_value)
+    {
+        return RESULT_error_void_struct(fmt_res.result.error);
+    }
+    LOGGING_set_format(LOG_LEVEL_INFO, fmt_res.result.value);
+    fmt_res = CONFIG_get_as_str(OPT_LOGGING_FORMAT_WARN);
+    if (!fmt_res.has_value)
+    {
+        return RESULT_error_void_struct(fmt_res.result.error);
+    }
+    LOGGING_set_format(LOG_LEVEL_WARN, fmt_res.result.value);
+    fmt_res = CONFIG_get_as_str(OPT_LOGGING_FORMAT_ERROR);
+    if (!fmt_res.has_value)
+    {
+        return RESULT_error_void_struct(fmt_res.result.error);
+    }
+    LOGGING_set_format(LOG_LEVEL_ERROR, fmt_res.result.value);
+
+    return RESULT_ok_void();
+}
+
+#if defined(__cplusplus)
+/* Convert a string literal to UTIL_StringBuffer. DON'T MODIFY IT! */
+#define FN__STRVIEW(str) const_cast<UTIL_StringBuffer>(str)
+#else
+/* Convert a string literal to UTIL_StringBuffer. DON'T MODIFY IT! */
+#define FN__STRVIEW(str) (str)
+#endif
 
 /* Initialize Fast Networking module. */
-int FN_initialize()
+RESULT_void FN_initialize()
 {
-    int ret;
-    enum LOGGING_LogLevel log_level;
-
-    ret = 0;
+    RESULT_void ret;
 
     UTIL_initialize();
     LOGGING_initialize();
 
     ret = NET_initialize();
-    if (ret < 0)
+    if (!ret.has_value)
     {
-        goto FAIL;
+        return ret;
     }
 
     ret = MULTICAST_initialize();
-    if (ret < 0)
+    if (!ret.has_value)
     {
-        goto FAIL;
+        return ret;
     }
 
-    CONFIG_initialize();
+    ret = CONFIG_initialize();
+    if (!ret.has_value)
+    {
+        return ret;
+    }
 
     if (LOGGING_logfile_supports_color())
     {
@@ -3966,76 +4053,72 @@ int FN_initialize()
         entry.type = CONFIG_CONFIG_ENTRY_TYPE_STRING;
         entry.key = NULL;
 
-        entry.value.str_val = "\x1b[34m%2\x1b[0m";
+        entry.value.str_val = FN__STRVIEW("\x1b[34m%2\x1b[0m");
         CONFIG_set_config(OPT_LOGGING_FORMAT_DEBUG, &entry);
 
-        entry.value.str_val = "%2";
+        entry.value.str_val = FN__STRVIEW("%2");
         CONFIG_set_config(OPT_LOGGING_FORMAT_INFO, &entry);
 
-        entry.value.str_val = "\x1b[33m%2\x1b[0m";
+        entry.value.str_val = FN__STRVIEW("\x1b[33m%2\x1b[0m");
         CONFIG_set_config(OPT_LOGGING_FORMAT_WARN, &entry);
 
-        entry.value.str_val = "\x1b[31m%2\x1b[0m";
+        entry.value.str_val = FN__STRVIEW("\x1b[31m%2\x1b[0m");
         CONFIG_set_config(OPT_LOGGING_FORMAT_ERROR, &entry);
     }
 
     CONFIG_load();
 
-    /* Apply settings of logging. */
-    log_level = (enum LOGGING_LogLevel)CONFIG_get_as_int(OPT_LOGGING_LEVEL);
-    if (!LOGGING_is_valid_level(log_level))
+    ret = FN__apply_logging_settings();
+    if (!ret.has_value)
     {
-        LOGGING_error("Invalid logging level %d", log_level);
-        ret = -EINVAL;
-        goto FAIL;
+        return ret;
     }
-    LOGGING_set_level(log_level);
 
-    LOGGING_set_format(LOG_LEVEL_DEBUG, CONFIG_get_as_str(OPT_LOGGING_FORMAT_DEBUG));
-    LOGGING_set_format(LOG_LEVEL_INFO, CONFIG_get_as_str(OPT_LOGGING_FORMAT_INFO));
-    LOGGING_set_format(LOG_LEVEL_WARN, CONFIG_get_as_str(OPT_LOGGING_FORMAT_WARN));
-    LOGGING_set_format(LOG_LEVEL_ERROR, CONFIG_get_as_str(OPT_LOGGING_FORMAT_ERROR));
-
-    return ret;
-FAIL:
-    perror("FN_initialize"); /* Don't use LOGGING_perror here. */
-    return ret;
+    return RESULT_ok_void();
 }
 
-#define FN_ADD_TO_RECORD_SUCCESS 0
-#define FN_ADD_TO_RECORD_ALREADY_EXISTS 1
-#define FN_ADD_TO_RECORD_UPDATED 2
+/* Status of adding a record. */
+typedef enum FN_RecordStatus
+{
+    /* Record is successfully added. */
+    FN_ADD_TO_RECORD_SUCCESS = 0,
+    /* Record already exists. */
+    FN_ADD_TO_RECORD_ALREADY_EXISTS,
+    /* Record is updated. */
+    FN_ADD_TO_RECORD_UPDATED
+} FN_RecordStatus;
+
+RESULT_GENERIC(FN_RecordStatus)
 
 /* Add a record with hostname HOSTNAME and address ADDR into RECORD_MAP. */
-int FN_add_to_record(struct MAP_Map *record_map, const char *hostname, const struct NET_InetAddr *addr)
+RESULT_FN_RecordStatus FN_add_to_record(struct MAP_Map *record_map, UTIL_ConstString hostname,
+                                        const struct NET_InetAddr *addr)
 {
-    int ret;
-    int status;
-    char *key;
+    RESULT_FN_RecordStatus ret;
+    RESULT_void ret2;
+    enum FN_RecordStatus status;
+    UTIL_StringBuffer key;
     void *val;
     const void *existing_val;
 
-    ret = 0;
+    ret = RESULT_ok_FN_RecordStatus(FN_ADD_TO_RECORD_SUCCESS);
     status = FN_ADD_TO_RECORD_SUCCESS;
     key = NULL;
     val = NULL;
 
     if (record_map == NULL || hostname == NULL || addr == NULL)
-    {
-        ret = -EINVAL;
-        goto EXIT;
-    }
+        abort();
 
     key = UTIL_strdup(hostname);
     if (key == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO(FN_RecordStatus, EXC_CATEGORY_LIBC);
         goto EXIT;
     }
     val = UTIL_memdup(addr, sizeof(struct NET_InetAddr));
     if (val == NULL)
     {
-        ret = -ENOMEM;
+        ret = RESULT_ERRNO(FN_RecordStatus, EXC_CATEGORY_LIBC);
         goto EXIT;
     }
 
@@ -4052,72 +4135,83 @@ int FN_add_to_record(struct MAP_Map *record_map, const char *hostname, const str
     else
         status = FN_ADD_TO_RECORD_SUCCESS;
 
-    ret = MAP_set(record_map, key, val);
+    ret2 = MAP_set(record_map, key, val);
+    if (!ret2.has_value)
+    {
+        ret = RESULT_error_FN_RecordStatus_struct(ret2.error);
+        goto EXIT;
+    }
+
+    ret = RESULT_ok_FN_RecordStatus(status);
 
 EXIT:
-    if (ret != 0) /* Failed to add record. */
+    if (!ret.has_value) /* Failed to add record. */
     {
         free(key);
         free(val);
     }
-    return ret == 0 ? status : ret;
+    return ret;
 }
 
 /* Check if address ADDR is IPv4 or IPv6, then add it to the corresponding record map. */
-void FN_add_to_record_auto(struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map, const char *hostname,
-                           const struct NET_InetAddr *addr)
+void FN_add_to_record_auto(struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map,
+                           UTIL_ConstString hostname, const struct NET_InetAddr *addr)
 {
-    int ret;
-    int add_ret;
+    FN_RecordStatus add_stat;
+    RESULT_FN_RecordStatus add_res;
 
     if (record_inet4_map == NULL || record_inet6_map == NULL || hostname == NULL || addr == NULL)
-        return;
-
-    ret = 0;
+        abort();
 
     if (addr->version == NET_INET_VERSION_4)
     {
-        char out_buf[INET_ADDRSTRLEN];
+        char out_buf[NET_ADDR_REPR_MAX_LENGTH];
 
-        add_ret = FN_add_to_record(record_inet4_map, hostname, addr);
-        if (add_ret < 0)
-            LOGGING_pwarn("IPv4 FN_add_to_record", add_ret);
+        add_res = FN_add_to_record(record_inet4_map, hostname, addr);
+        if (!add_res.has_value)
+        {
+            LOGGING_pwarn("IPv4 FN_add_to_record", add_res.result.error);
+            return;
+        }
 
-        ret = NET_repr_inet_addr(addr, out_buf, sizeof(out_buf));
-        if (ret < 0)
-            LOGGING_pwarn("IPv4 NET_repr_inet_addr", ret);
-        else if (add_ret == FN_ADD_TO_RECORD_SUCCESS)
+        add_stat = add_res.result.value;
+
+        NET_repr_inet_addr(addr, out_buf, sizeof(out_buf));
+        if (add_stat == FN_ADD_TO_RECORD_SUCCESS)
             LOGGING_info("Added IPv4 record: %s -> %s", hostname, out_buf);
-        else if (add_ret == FN_ADD_TO_RECORD_UPDATED)
+        else if (add_stat == FN_ADD_TO_RECORD_UPDATED)
             LOGGING_info("Updated IPv4 record: %s -> %s", hostname, out_buf);
+        /* else {} */
     }
     else if (addr->version == NET_INET_VERSION_6)
     {
-        char out_buf[INET6_ADDRSTRLEN];
+        char out_buf[NET_ADDR_REPR_MAX_LENGTH];
 
-        add_ret = FN_add_to_record(record_inet6_map, hostname, addr);
-        if (add_ret < 0)
-            LOGGING_pwarn("IPv6 FN_add_to_record", add_ret);
+        add_res = FN_add_to_record(record_inet6_map, hostname, addr);
+        if (!add_res.has_value)
+        {
+            LOGGING_pwarn("IPv6 FN_add_to_record", add_res.result.error);
+            return;
+        }
 
-        ret = NET_repr_inet_addr(addr, out_buf, sizeof(out_buf));
-        if (ret < 0)
-            LOGGING_pwarn("IPv6 NET_repr_inet_addr", ret);
-        else if (add_ret == FN_ADD_TO_RECORD_SUCCESS)
+        add_stat = add_res.result.value;
+
+        NET_repr_inet_addr(addr, out_buf, sizeof(out_buf));
+        if (add_stat == FN_ADD_TO_RECORD_SUCCESS)
             LOGGING_info("Added IPv6 record: %s -> %s", hostname, out_buf);
-        else if (add_ret == FN_ADD_TO_RECORD_UPDATED)
+        else if (add_stat == FN_ADD_TO_RECORD_UPDATED)
             LOGGING_info("Updated IPv6 record: %s -> %s", hostname, out_buf);
     }
     else
-    {
-        ret = -EAFNOSUPPORT;
-        LOGGING_pwarn("FN_add_to_record", ret);
-    }
+        abort();
 }
 
-void FN_process_offline_notice(struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map, const char *hostname)
+/* Process offline notice. */
+void FN_process_offline_notice(struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map,
+                               UTIL_ConstString hostname)
 {
     if (record_inet4_map == NULL || record_inet6_map == NULL || hostname == NULL)
-        return;
+        abort();
 
     if (MAP_contains(record_inet4_map, hostname) || MAP_contains(record_inet6_map, hostname))
         LOGGING_info("Hostname went offline: %s", hostname);
@@ -4126,11 +4220,12 @@ void FN_process_offline_notice(struct MAP_Map *record_inet4_map, struct MAP_Map 
     MAP_remove(record_inet6_map, hostname);
 }
 
-int FN_recv_boardcast(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map)
+/* Process boardcast. */
+RESULT_void FN_recv_boardcast(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map)
 {
-    int ret;
+    RESULT_void ret;
     char data_buf[MULTICAST_MAX_DOMAIN_LEN];
-    char recv_from_addr_repr[UTIL_max(INET6_ADDRSTRLEN, INET_ADDRSTRLEN)];
+    char recv_from_addr_repr[NET_ADDR_REPR_MAX_LENGTH];
     struct MULTICAST_BoardcastHeader header;
     struct NET_InetAddr recv_from_addr;
     size_t length;
@@ -4142,14 +4237,10 @@ int FN_recv_boardcast(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MA
     length = 0;
 
     ret = MULTICAST_recv_boardcast(sk, data_buf, &length, &header, &recv_from_addr);
-    if (NET_need_try_again(ret))
+    if (!ret.has_value && ret.error.code == EFN_TRY_AGAIN)
     {
-        /* Ignore non-multicast packets. */
-        return -EAGAIN;
-    }
-    if (ret < 0)
-    {
-        LOGGING_perror("MULTICAST_recv_boardcast", ret);
+        if (!NET_need_try_again(ret.error))
+            LOGGING_perror("MULTICAST_recv_boardcast", ret.error);
         return ret;
     }
     LOGGING_debug("Received multicast packet: type=%u, hostname=%s", header.type, data_buf);
@@ -4174,25 +4265,22 @@ int FN_recv_boardcast(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MA
     else if (header.type == MULTICAST_TYPE_REQUEST)
     {
         /* A request that conatains same hostname as me. */
-        ret = NET_repr_inet_addr(&recv_from_addr, recv_from_addr_repr, sizeof(recv_from_addr_repr));
-        if (ret < 0)
-            LOGGING_pwarn("NET_repr_inet_addr", ret);
-        else
-            LOGGING_info("Refusing conflicting hostname request '%s' from [%s]", data_buf, recv_from_addr_repr);
+        NET_repr_inet_addr(&recv_from_addr, recv_from_addr_repr, sizeof(recv_from_addr_repr));
+        LOGGING_info("Refusing conflicting hostname request '%s' from [%s]", data_buf, recv_from_addr_repr);
         MULTICAST_send_refuse(sk, data_buf, length, recv_from_addr.version);
     }
 
-    return 0;
+    return RESULT_ok_void();
 }
 
-int FN_process_dns_query(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map)
+RESULT_void FN_process_dns_query(NET_Socket sk, struct MAP_Map *record_inet4_map, struct MAP_Map *record_inet6_map)
 {
-    int ret;
+    RESULT_void ret;
     struct DNS_Header header;
     struct DNS_Question question;
     struct NET_InetAddr src_addr;
     uint16_t src_port;
-    char src_addr_repr[UTIL_max(INET6_ADDRSTRLEN, INET_ADDRSTRLEN)];
+    char src_addr_repr[NET_ADDR_REPR_MAX_LENGTH];
     struct NET_InetAddr *record_A_addr;
     struct NET_InetAddr *record_AAAA_addr;
 
@@ -4205,37 +4293,27 @@ int FN_process_dns_query(NET_Socket sk, struct MAP_Map *record_inet4_map, struct
     record_AAAA_addr = NULL;
 
     ret = DNS_recv_query(sk, &header, &question, &src_addr, &src_port);
-    if (NET_need_try_again(ret))
+    if (!ret.has_value && ret.error.code == EFN_TRY_AGAIN)
     {
-        ret = -EAGAIN;
-        goto EXIT;
+        if (!NET_need_try_again(ret.error))
+            LOGGING_perror("DNS_recv_query", ret.error);
+        return ret;
     }
-    if (ret < 0)
-    {
-        LOGGING_pwarn("DNS_recv_query", ret);
-        ret = -EINVAL;
-        goto EXIT;
-    }
-    ret = NET_repr_inet_addr(&src_addr, src_addr_repr, sizeof(src_addr_repr));
-    if (ret < 0)
-    {
-        LOGGING_pwarn("NET_repr_inet_addr", ret);
-    }
-    else
-        LOGGING_debug("Received DNS query: id=%u, qname=%s, qtype=%u, src=[%s]:%u", header.id, question.name,
-                      question.qtype, src_addr_repr, src_port);
+    NET_repr_inet_addr(&src_addr, src_addr_repr, sizeof(src_addr_repr));
+    LOGGING_debug("Received DNS query: id=%u, qname=%s, qtype=%u, src=[%s]:%u", header.id, question.name,
+                  question.qtype, src_addr_repr, src_port);
 
     /* Find record for hostname. */
-    record_A_addr = (struct NET_InetAddr *)MAP_get(record_inet4_map, (const char *)question.name);
-    record_AAAA_addr = (struct NET_InetAddr *)MAP_get(record_inet6_map, (const char *)question.name);
+    record_A_addr = (struct NET_InetAddr *)MAP_get(record_inet4_map, (UTIL_ConstString)question.name);
+    record_AAAA_addr = (struct NET_InetAddr *)MAP_get(record_inet6_map, (UTIL_ConstString)question.name);
 
     if (record_A_addr == NULL && record_AAAA_addr == NULL)
     {
         LOGGING_warn("No record found for hostname: %s", question.name);
         ret = DNS_reply_query_notfound(sk, &header, &question, &src_addr, src_port);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("DNS_send_response_no_record", ret);
+            LOGGING_perror("DNS_reply_query_notfound", ret.error);
         }
         goto EXIT;
     }
@@ -4245,18 +4323,18 @@ int FN_process_dns_query(NET_Socket sk, struct MAP_Map *record_inet4_map, struct
         if (record_A_addr != NULL)
         {
             ret = DNS_reply_query(sk, record_A_addr, &header, &question, &src_addr, src_port);
-            if (ret < 0)
+            if (!ret.has_value)
             {
-                LOGGING_pwarn("DNS_reply_query_with_record", ret);
+                LOGGING_perror("DNS_reply_query", ret.error);
             }
         }
         else
         {
             LOGGING_warn("No A record found for hostname: %s", question.name);
             ret = DNS_reply_query_notfound(sk, &header, &question, &src_addr, src_port);
-            if (ret < 0)
+            if (!ret.has_value)
             {
-                LOGGING_pwarn("DNS_send_response_no_record", ret);
+                LOGGING_pwarn("DNS_reply_query_notfound", ret.error);
             }
         }
     }
@@ -4265,25 +4343,25 @@ int FN_process_dns_query(NET_Socket sk, struct MAP_Map *record_inet4_map, struct
         if (record_AAAA_addr != NULL)
         {
             ret = DNS_reply_query(sk, record_AAAA_addr, &header, &question, &src_addr, src_port);
-            if (ret < 0)
+            if (!ret.has_value)
             {
-                LOGGING_pwarn("DNS_reply_query_with_record", ret);
+                LOGGING_perror("DNS_reply_query", ret.error);
             }
         }
         else
         {
             LOGGING_warn("No AAAA record found for hostname: %s", question.name);
             ret = DNS_reply_query_notfound(sk, &header, &question, &src_addr, src_port);
-            if (ret < 0)
+            if (!ret.has_value)
             {
-                LOGGING_pwarn("DNS_send_response_no_record", ret);
+                LOGGING_pwarn("DNS_reply_query_notfound", ret.error);
             }
         }
     }
     else
     {
-        ret = -EOPNOTSUPP; /* Only A, AAAA supported in this example. */
-        LOGGING_pwarn("DNS_process_query", ret);
+        /* Only A, AAAA supported in this example. */
+        LOGGING_warn("Unsupported DNS query type %u for hostname: %s", question.qtype, question.name);
     }
 
 EXIT:
@@ -4297,28 +4375,42 @@ static UTIL_Bool g_FN_mainthread_running = UTIL_TRUE;
 /* Signal handler for SIGINT. */
 void FN_signal_handler(int signum)
 {
+    static int FN_forceexit_counter = FN_FORCEEXIT_COUNT;
+
     if (signum == SIGINT)
     {
-        LOGGING_info("SIGINT signal received. Exiting ...");
+        if (FN_forceexit_counter < FN_FORCEEXIT_COUNT)
+        {
+            if (FN_forceexit_counter <= 0)
+            {
+                LOGGING_error("Force exiting ...");
+                exit(EXIT_FAILURE);
+            }
+            else
+                LOGGING_error("Press Ctrl+C %d more times to force exit.", FN_forceexit_counter);
+        }
+        else
+            LOGGING_info("SIGINT signal received. Exiting ...");
+        FN_forceexit_counter--;
     }
     g_FN_mainthread_running = UTIL_FALSE;
 }
 
 /* Request to join multicast group for all hostnames in g_MULTICAST_hostnames via sockets SK4 and SK6. */
-int FN_request_join(NET_Socket sk4, NET_Socket sk6)
+RESULT_void FN_request_join(NET_Socket sk4, NET_Socket sk6)
 {
-    int ret;
+    RESULT_void ret;
     size_t i;
     int ask4_count;
     int ask6_count;
     struct UTIL_Timer timer;
     char data_buf[MULTICAST_MAX_DOMAIN_LEN];
-    char addr_repr_buf[UTIL_max(INET_ADDRSTRLEN, INET6_ADDRSTRLEN)];
+    char addr_repr_buf[NET_ADDR_REPR_MAX_LENGTH];
     size_t recv_len;
     struct MULTICAST_BoardcastHeader header;
     struct NET_InetAddr out_src_addr;
 
-    ret = 0;
+    ret = RESULT_ok_void();
     i = 0;
     ask4_count = 3; /* Number of times to ask for each hostname. */
     ask6_count = ask4_count;
@@ -4342,9 +4434,9 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
                     {
                         ret = MULTICAST_send_request(sk4, g_MULTICAST_hostnames.arr[i],
                                                      strlen(g_MULTICAST_hostnames.arr[i]), NET_INET_VERSION_4);
-                        if (ret < 0)
+                        if (!ret.has_value)
                         {
-                            LOGGING_pwarn("IPv4 MULTICAST_send_request", ret);
+                            LOGGING_pwarn("IPv4 MULTICAST_send_request", ret.error);
                             goto SEND_CONTINUE4;
                         }
                     }
@@ -4358,9 +4450,9 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
                     {
                         ret = MULTICAST_send_request(sk6, g_MULTICAST_hostnames.arr[i],
                                                      strlen(g_MULTICAST_hostnames.arr[i]), NET_INET_VERSION_6);
-                        if (ret < 0)
+                        if (!ret.has_value)
                         {
-                            LOGGING_pwarn("IPv6 MULTICAST_send_request", ret);
+                            LOGGING_pwarn("IPv6 MULTICAST_send_request", ret.error);
                             goto SEND_CONTINUE6;
                         }
                     }
@@ -4374,11 +4466,11 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
             if (sk4 != NET_INVALID_SOCKET)
             {
                 ret = MULTICAST_recv_boardcast(sk4, data_buf, &recv_len, &header, &out_src_addr);
-                if (ret < 0)
+                if (!ret.has_value)
                 {
-                    if (!NET_need_try_again(ret))
+                    if (!NET_need_try_again(ret.error))
                     {
-                        LOGGING_pwarn("IPv4 MULTICAST_recv_boardcast", ret);
+                        LOGGING_pwarn("IPv4 MULTICAST_recv_boardcast", ret.error);
                     }
                     goto RECV_CONTINUE4;
                 }
@@ -4386,16 +4478,9 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
                 {
                     if (header.type == MULTICAST_TYPE_REFUSE)
                     {
-                        ret = NET_repr_inet_addr(&out_src_addr, addr_repr_buf, sizeof(addr_repr_buf));
-                        if (ret < 0)
-                        {
-                            LOGGING_pwarn("IPv4 NET_repr_inet_addr", ret);
-                        }
-                        else
-                        {
-                            LOGGING_error("Hostname %s refused to join by [%s]", data_buf, addr_repr_buf);
-                        }
-                        ret = -EPERM;
+                        NET_repr_inet_addr(&out_src_addr, addr_repr_buf, sizeof(addr_repr_buf));
+                        LOGGING_error("Hostname %s refused to join by [%s]", data_buf, addr_repr_buf);
+                        ret = RESULT_error_void(EFN_JOIN_REFUSED, EXC_CATEGORY_FN);
                         goto EXIT;
                     }
                 }
@@ -4406,11 +4491,11 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
             if (sk6 != NET_INVALID_SOCKET)
             {
                 ret = MULTICAST_recv_boardcast(sk6, data_buf, &recv_len, &header, &out_src_addr);
-                if (ret < 0)
+                if (!ret.has_value)
                 {
-                    if (!NET_need_try_again(ret))
+                    if (!NET_need_try_again(ret.error))
                     {
-                        LOGGING_pwarn("IPv6 MULTICAST_recv_boardcast", ret);
+                        LOGGING_pwarn("IPv6 MULTICAST_recv_boardcast", ret.error);
                     }
                     goto RECV_CONTINUE6;
                 }
@@ -4418,16 +4503,9 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
                 {
                     if (header.type == MULTICAST_TYPE_REFUSE)
                     {
-                        ret = NET_repr_inet_addr(&out_src_addr, addr_repr_buf, sizeof(addr_repr_buf));
-                        if (ret < 0)
-                        {
-                            LOGGING_pwarn("IPv6 NET_repr_inet_addr", ret);
-                        }
-                        else
-                        {
-                            LOGGING_error("Hostname %s refused to join by [%s]", data_buf, addr_repr_buf);
-                        }
-                        ret = -EPERM;
+                        NET_repr_inet_addr(&out_src_addr, addr_repr_buf, sizeof(addr_repr_buf));
+                        LOGGING_error("Hostname %s refused to join by [%s]", data_buf, addr_repr_buf);
+                        ret = RESULT_error_void(EFN_JOIN_REFUSED, EXC_CATEGORY_FN);
                         goto EXIT;
                     }
                 }
@@ -4437,7 +4515,7 @@ int FN_request_join(NET_Socket sk4, NET_Socket sk6)
             /* Check if done asking for this hostname. */
             if (ask4_count <= 0 && ask6_count <= 0)
             {
-                ret = 0;
+                ret = RESULT_ok_void();
                 goto EXIT;
             }
 
@@ -4461,7 +4539,8 @@ void FN_print_version()
     printf("Written by ChenPi11.\n");
 }
 
-void FN_print_help(char *prog_name)
+/* Print help infomation. */
+void FN_print_help(UTIL_StringBuffer prog_name)
 {
     printf("Usage: %s [OPTIONS]\n", prog_name);
     printf("Fast Networking - Portable simple networking utility.\n\n");
@@ -4473,6 +4552,7 @@ void FN_print_help(char *prog_name)
     printf("  -i, --build-info\tPrint build information.\n");
 }
 
+/* Checking for runtime is little endian. */
 UTIL_Bool FN_is_little_endian()
 {
     uint16_t test = 0x1;
@@ -4480,79 +4560,86 @@ UTIL_Bool FN_is_little_endian()
     return p[0] == 0x1 ? UTIL_TRUE : UTIL_FALSE;
 }
 
+/* Print build infomation. */
 void FN_print_build_info()
 {
     printf("Build Info:\n");
 
     /* Language standard. */
 #if defined(__cplusplus)
+    printf("\tLanguage Standard: C++ %ld\n",
 #if defined(_MSVC_LANG)
-    printf("  Language Standard: C++ %d\n", _MSVC_LANG);
+           _MSVC_LANG
 #else
-    printf("  Language Standard: C++ %d\n", __cplusplus);
+           __cplusplus
 #endif
-#elif defined(__STDC_VERSION__)
-    printf("  Language Standard: C %ld\n", __STDC_VERSION__);
+    );
+#endif
+
+#if defined(__STDC_VERSION__)
+    printf("\tLanguage Standard: C %ld\n", __STDC_VERSION__);
 #else
-    printf("  Language Standard: C89\n");
+    printf("\tLanguage Standard: C89\n");
+#endif
+
+#if defined(__STDC__)
+    printf("\tANSI C support: %s\n", __STDC__ ? "Yes" : "No");
 #endif
 
     /* Compiler. */
 #if defined(__GNUC__)
-    printf("  Compiler: GCC %d.%d.%d\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+    printf("\tCompiler: GCC %d.%d.%d\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 #elif defined(__clang__)
-    printf("  Compiler: Clang %d.%d.%d\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
+    printf("\tCompiler: Clang %d.%d.%d\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
 #elif defined(_MSC_VER)
-    printf("  Compiler: MSVC %d\n", _MSC_VER);
+    printf("\tCompiler: MSVC %d\n", _MSC_VER);
 #else
-    printf("  Compiler: Unknown\n");
+    printf("\tCompiler: Unknown\n");
 #endif
 
     /* Platform. */
+    printf("\tPlatform: %s\n",
 #if defined(_WIN32) || defined(_WIN64)
-    printf("  Platform: Windows\n");
+           "Windows"
 #elif defined(__CYGWIN__)
-    printf("  Platform: Cygwin\n");
+           "Cygwin"
 #elif defined(__MINGW32__) || defined(__MINGW64__)
-    printf("  Platform: Windows (MinGW)\n");
+           "Windows (MinGW)"
 #elif defined(__linux__)
-    printf("  Platform: Linux\n");
+           "Linux"
 #elif defined(__APPLE__)
-    printf("  Platform: Darwin\n");
+           "Darwin"
 #elif defined(__FreeBSD__)
-    printf("  Platform: FreeBSD\n");
+           "FreeBSD"
 #elif defined(__NetBSD__)
-    printf("  Platform: NetBSD\n");
+           "NetBSD"
 #elif defined(__OpenBSD__)
-    printf("  Platform: OpenBSD\n");
+           "OpenBSD"
 #elif defined(__unix__) || defined(__unix)
-    printf("  Platform: Unix\n");
+           "Unix"
 #else
-    printf("  Platform: Unknown\n");
+           "Unknown"
 #endif
+    );
 
     /* Build date and time. */
-    printf("  Build Date: %s\n", __DATE__);
-    printf("  Build Time: %s\n", __TIME__);
+    printf("\tBuild Date: %s\n", __DATE__);
+    printf("\tBuild Time: %s\n", __TIME__);
+    printf("\tBuild File: %s\n", __FILE__);
 
     /* Endianness. */
+    printf("\tEndianness: %s\n",
 #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
-    printf("  Endianness: Little Endian\n");
+           "Little Endian"
 #elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
-    printf("  Endianness: Big Endian\n");
+           "Big Endian"
 #else
-    printf("  Endianness: Unknown\n");
+           "Unknown"
 #endif
+    );
 
     /* Runtime byte order. */
-    if (FN_is_little_endian())
-    {
-        printf("  Runtime Byte Order: Little Endian\n");
-    }
-    else
-    {
-        printf("  Runtime Byte Order: Big Endian\n");
-    }
+    printf("\tRuntime Byte Order: %s\n", FN_is_little_endian() ? "Little Endian" : "Big Endian");
 }
 
 /* Print all configuration entries. */
@@ -4576,10 +4663,11 @@ void FN_iter_config_entries()
     }
 }
 
-void FN_parse_arguments(int argc, char *argv[])
+/* Parse FastNetworking arguments. */
+int FN_parse_arguments(int argc, UTIL_StringBuffer argv[])
 {
+    RESULT_void res;
     int opt;
-    enum LOGGING_LogLevel log_level;
 
     for (opt = 1; opt < argc; opt++)
     {
@@ -4593,18 +4681,18 @@ void FN_parse_arguments(int argc, char *argv[])
             else
             {
                 LOGGING_error("Missing argument for --config");
-                exit(EXIT_FAILURE);
+                return EXIT_FAILURE;
             }
         }
         else if (strcmp(argv[opt], "--help") == 0 || strcmp(argv[opt], "-h") == 0)
         {
             FN_print_help(argv[0]);
-            exit(EXIT_SUCCESS);
+            return EXIT_SUCCESS;
         }
         else if (strcmp(argv[opt], "--version") == 0 || strcmp(argv[opt], "-v") == 0)
         {
             FN_print_version();
-            exit(EXIT_SUCCESS);
+            return EXIT_SUCCESS;
         }
         else if (strcmp(argv[opt], "--logging-level") == 0 || strcmp(argv[opt], "-l") == 0)
         {
@@ -4612,17 +4700,19 @@ void FN_parse_arguments(int argc, char *argv[])
             {
                 struct CONFIG_ConfigEntry entry;
                 uint64_t level;
+                RESULT_uint64_t level_res;
 
-                level = UTIL_str_to_unsigned_base10(argv[opt + 1]);
-                if (level < 0)
+                level_res = UTIL_str_to_unsigned_base10(argv[opt + 1]);
+                if (!level_res.has_value)
                 {
                     LOGGING_error("Invalid logging level %s", argv[opt + 1]);
-                    exit(EXIT_FAILURE);
+                    return EXIT_FAILURE;
                 }
 
+                level = level_res.result.value;
                 entry.type = CONFIG_CONFIG_ENTRY_TYPE_INT;
                 entry.key = NULL;
-                entry.value.int_val = (int)level;
+                entry.value.int_val = level;
 
                 CONFIG_set_config(OPT_LOGGING_LEVEL, &entry);
                 opt++;
@@ -4630,44 +4720,43 @@ void FN_parse_arguments(int argc, char *argv[])
             else
             {
                 LOGGING_error("Missing argument for --logging-level");
-                exit(EXIT_FAILURE);
+                return EXIT_FAILURE;
             }
         }
         else if (strcmp(argv[opt], "--list-config") == 0)
         {
             FN_iter_config_entries();
-            exit(EXIT_SUCCESS);
+            return EXIT_SUCCESS;
         }
         else if (strcmp(argv[opt], "--build-info") == 0 || strcmp(argv[opt], "-i") == 0)
         {
             FN_print_build_info();
-            exit(EXIT_SUCCESS);
+            return EXIT_SUCCESS;
         }
         else
         {
             LOGGING_error("Unknown argument: %s", argv[opt]);
-            exit(EXIT_FAILURE);
+            return EXIT_FAILURE;
         }
     }
 
     /* Apply settings of logging. */
-    log_level = (enum LOGGING_LogLevel)CONFIG_get_as_int(OPT_LOGGING_LEVEL);
-    if (!LOGGING_is_valid_level(log_level))
+    res = FN__apply_logging_settings();
+    if (!res.has_value)
     {
-        LOGGING_error("Invalid logging level %d", log_level);
-        exit(EXIT_FAILURE);
+        LOGGING_perror("Error while apply logging settings", res.error);
+        return EXIT_FAILURE;
     }
-    LOGGING_set_level(log_level);
 
-    LOGGING_set_format(LOG_LEVEL_DEBUG, CONFIG_get_as_str(OPT_LOGGING_FORMAT_DEBUG));
-    LOGGING_set_format(LOG_LEVEL_INFO, CONFIG_get_as_str(OPT_LOGGING_FORMAT_INFO));
-    LOGGING_set_format(LOG_LEVEL_WARN, CONFIG_get_as_str(OPT_LOGGING_FORMAT_WARN));
-    LOGGING_set_format(LOG_LEVEL_ERROR, CONFIG_get_as_str(OPT_LOGGING_FORMAT_ERROR));
+    return EXIT_SUCCESS;
 }
 
-int main(int argc, char *argv[])
+/* Main logic. */
+int FN_main(int argc, UTIL_StringBuffer argv[])
 {
-    int ret;
+    int proc_ret;
+    RESULT_void ret;
+    int ret2;
     struct MAP_Map record_inet4_map; /* Mostly important: store hostname4 -> record. */
     struct MAP_Map record_inet6_map; /* Mostly important: store hostname6 -> record. */
 
@@ -4675,19 +4764,27 @@ int main(int argc, char *argv[])
     NET_Socket multicast_sk6;
     NET_Socket dns_sk4;
     NET_Socket dns_sk6;
+    RESULT_NET_Socket sk_res;
 
     struct UTIL_Timer boardcast_timer;
 
+    proc_ret = EXIT_SUCCESS;
+
     /* Initialize Fast Networking. */
-    if (FN_initialize() < 0)
+    ret = FN_initialize();
+    if (!ret.has_value)
     {
+        LOGGING_perror("Error while initializing Fast Networking", ret.error);
         return EXIT_FAILURE;
     }
 
     /* Parse arguments. */
-    FN_parse_arguments(argc, argv);
+    ret2 = FN_parse_arguments(argc, argv);
+    if (ret2 != EXIT_SUCCESS)
+    {
+        return ret2;
+    }
 
-    ret = EXIT_SUCCESS;
     multicast_sk4 = NET_INVALID_SOCKET;
     multicast_sk6 = NET_INVALID_SOCKET;
     dns_sk4 = NET_INVALID_SOCKET;
@@ -4695,31 +4792,39 @@ int main(int argc, char *argv[])
     g_FN_mainthread_running = UTIL_TRUE;
 
     /* Create DNS server sockets. */
-    dns_sk4 = NET_async_socket(NET_INET_VERSION_4);
-    if (dns_sk4 < 0)
+    NET_async_socket(NET_INET_VERSION_6);
+    NET_async_socket(NET_INET_VERSION_6);
+    NET_async_socket(NET_INET_VERSION_6);
+    sk_res = NET_async_socket(NET_INET_VERSION_4);
+    if (!sk_res.has_value)
     {
-        LOGGING_pwarn("IPv4 NET_async_socket", (int)dns_sk4);
+        LOGGING_pwarn("IPv4 NET_async_socket", sk_res.result.error);
         dns_sk4 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
     }
-    dns_sk6 = NET_async_socket(NET_INET_VERSION_6);
-    if (dns_sk6 < 0)
+    else
+        dns_sk4 = sk_res.result.value;
+
+    sk_res = NET_async_socket(NET_INET_VERSION_6);
+    if (!sk_res.has_value)
     {
-        LOGGING_pwarn("IPv6 NET_async_socket", (int)dns_sk6);
+        LOGGING_pwarn("IPv6 NET_async_socket", sk_res.result.error);
         dns_sk6 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
     }
+    else
+        dns_sk6 = sk_res.result.value;
 
     /* Bind DNS server sockets. */
     if (dns_sk4 != NET_INVALID_SOCKET)
     {
         ret = DNS_bind_socket(dns_sk4, DNS_ADDR4, DNS_PORT, NET_INET_VERSION_4);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv4 DNS_bind_socket", ret);
+            LOGGING_pwarn("IPv4 DNS_bind_socket", ret.error);
             NET_closesocket(dns_sk4);
             dns_sk4 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-            ret = -EXIT_FAILURE;
+            proc_ret = EXIT_FAILURE;
         }
         else
             LOGGING_info("IPv4 DNS server socket created: [%s]:%u", DNS_ADDR4, DNS_PORT);
@@ -4727,12 +4832,12 @@ int main(int argc, char *argv[])
     if (dns_sk6 != NET_INVALID_SOCKET)
     {
         ret = DNS_bind_socket(dns_sk6, DNS_ADDR6, DNS_PORT, NET_INET_VERSION_6);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv6 DNS_bind_socket", ret);
+            LOGGING_pwarn("IPv6 DNS_bind_socket", ret.error);
             NET_closesocket(dns_sk6);
             dns_sk6 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-            ret = -EXIT_FAILURE;
+            proc_ret = EXIT_FAILURE;
         }
         else
             LOGGING_info("IPv6 DNS server socket created: [%s]:%u", DNS_ADDR6, DNS_PORT);
@@ -4741,34 +4846,38 @@ int main(int argc, char *argv[])
     if (dns_sk4 == NET_INVALID_SOCKET && dns_sk6 == NET_INVALID_SOCKET)
     {
         LOGGING_error("No valid DNS server sockets created. Exiting ...");
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
         goto EXIT;
     }
 
     /* Multicast socket. */
-    multicast_sk4 = NET_async_socket(NET_INET_VERSION_4);
-    if (multicast_sk4 < 0)
+    sk_res = NET_async_socket(NET_INET_VERSION_4);
+    if (!sk_res.has_value)
     {
-        LOGGING_pwarn("IPv4 NET_async_socket", (int)multicast_sk4);
+        LOGGING_pwarn("IPv4 NET_async_socket", sk_res.result.error);
         multicast_sk4 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
     }
-    multicast_sk6 = NET_async_socket(NET_INET_VERSION_6);
-    if (multicast_sk6 < 0)
+    else
+        multicast_sk4 = sk_res.result.value;
+    sk_res = NET_async_socket(NET_INET_VERSION_6);
+    if (!sk_res.has_value)
     {
-        LOGGING_pwarn("IPv6 NET_async_socket", (int)multicast_sk6);
+        LOGGING_pwarn("IPv6 NET_async_socket", sk_res.result.error);
         multicast_sk6 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
     }
+    else
+        multicast_sk6 = sk_res.result.value;
 
     /* Initialize multicast sockets. */
     if (multicast_sk4 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_inet4_init_multicast_socket(multicast_sk4, MULTICAST_ADDR);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv4 MULTICAST_inet4_init_multicast_socket", ret);
-            ret = -EXIT_FAILURE;
+            LOGGING_pwarn("IPv4 MULTICAST_inet4_init_multicast_socket", ret.error);
+            proc_ret = EXIT_FAILURE;
             NET_closesocket(multicast_sk4);
             multicast_sk4 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
         }
@@ -4778,10 +4887,10 @@ int main(int argc, char *argv[])
     if (multicast_sk6 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_inet6_init_multicast_socket(multicast_sk6, MULTICAST_ADDR6);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv6 MULTICAST_inet6_init_multicast_socket", ret);
-            ret = -EXIT_FAILURE;
+            LOGGING_pwarn("IPv6 MULTICAST_inet6_init_multicast_socket", ret.error);
+            proc_ret = EXIT_FAILURE;
             NET_closesocket(multicast_sk6);
             multicast_sk6 = NET_INVALID_SOCKET; /* Mark as invalid socket. */
         }
@@ -4792,34 +4901,38 @@ int main(int argc, char *argv[])
     if (multicast_sk4 == NET_INVALID_SOCKET && multicast_sk6 == NET_INVALID_SOCKET)
     {
         LOGGING_error("No valid multicast sockets created. Exiting ...");
-        ret = -EXIT_FAILURE;
+        proc_ret = EXIT_FAILURE;
         goto EXIT;
     }
 
     /* Allocate memory for record maps. */
     ret = MAP_create(&record_inet4_map, 4);
-    if (ret < 0)
+    if (!ret.has_value)
     {
-        LOGGING_perror("MAP_create for IPv4 record map", ret);
-        ret = -EXIT_FAILURE;
+        LOGGING_perror("MAP_create for IPv4 record map", ret.error);
+        proc_ret = EXIT_FAILURE;
         goto EXIT;
     }
     ret = MAP_create(&record_inet6_map, 4);
-    if (ret < 0)
+    if (!ret.has_value)
     {
-        LOGGING_perror("MAP_create for IPv6 record map", ret);
-        ret = -EXIT_FAILURE;
+        LOGGING_perror("MAP_create for IPv6 record map", ret.error);
+        proc_ret = EXIT_FAILURE;
         goto EXIT;
     }
 
     /* Register signal handlers. */
-    signal(SIGINT, FN_signal_handler);
+    if (signal(SIGINT, FN_signal_handler) == SIG_ERR)
+    {
+        LOGGING_pwarn("signal", EXC_get_last_error(EXC_CATEGORY_LIBC));
+    }
 
     /* Request to join the network. */
     ret = FN_request_join(multicast_sk4, multicast_sk6);
-    if (ret < 0)
+    if (!ret.has_value)
     {
-        LOGGING_perror("FN_request_join", ret);
+        LOGGING_perror("FN_request_join", ret.error);
+        proc_ret = EXIT_FAILURE;
         goto EXIT;
     }
 
@@ -4827,17 +4940,17 @@ int main(int argc, char *argv[])
     if (multicast_sk4 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_boardcast_self(multicast_sk4, NET_INET_VERSION_4);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv4 MULTICAST_boardcast_self", ret);
+            LOGGING_pwarn("IPv4 MULTICAST_boardcast_self", ret.error);
         }
     }
     if (multicast_sk6 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_boardcast_self(multicast_sk6, NET_INET_VERSION_6);
-        if (ret < 0)
+        if (!ret.has_value)
         {
-            LOGGING_pwarn("IPv6 MULTICAST_boardcast_self", ret);
+            LOGGING_pwarn("IPv6 MULTICAST_boardcast_self", ret.error);
         }
     }
     UTIL_timer_start(&boardcast_timer);
@@ -4848,13 +4961,13 @@ int main(int argc, char *argv[])
         if (multicast_sk4 != NET_INVALID_SOCKET)
         {
             ret = FN_recv_boardcast(multicast_sk4, &record_inet4_map, &record_inet6_map);
-            if (NET_need_try_again(ret))
+            if (!ret.has_value)
             {
-                goto RECV_CONTINUE4;
-            }
-            else if (ret < 0 && ret != -EAGAIN)
-            {
-                LOGGING_pwarn("FN_recv_boardcast", ret);
+                if (NET_need_try_again(ret.error))
+                {
+                    goto RECV_CONTINUE4;
+                }
+                LOGGING_pwarn("FN_recv_boardcast", ret.error);
             }
         }
 
@@ -4863,13 +4976,13 @@ int main(int argc, char *argv[])
         if (multicast_sk6 != NET_INVALID_SOCKET)
         {
             ret = FN_recv_boardcast(multicast_sk6, &record_inet4_map, &record_inet6_map);
-            if (NET_need_try_again(ret))
+            if (!ret.has_value)
             {
-                goto RECV_CONTINUE6;
-            }
-            else if (ret < 0 && ret != -EAGAIN)
-            {
-                LOGGING_pwarn("FN_recv_boardcast", ret);
+                if (NET_need_try_again(ret.error))
+                {
+                    goto RECV_CONTINUE6;
+                }
+                LOGGING_pwarn("FN_recv_boardcast", ret.error);
             }
         }
 
@@ -4881,17 +4994,17 @@ int main(int argc, char *argv[])
             if (multicast_sk4 != NET_INVALID_SOCKET)
             {
                 ret = MULTICAST_boardcast_self(multicast_sk4, NET_INET_VERSION_4);
-                if (ret < 0)
+                if (!ret.has_value && !NET_need_try_again(ret.error))
                 {
-                    LOGGING_pwarn("IPv4 MULTICAST_boardcast_self", ret);
+                    LOGGING_pwarn("IPv4 MULTICAST_boardcast_self", ret.error);
                 }
             }
             if (multicast_sk6 != NET_INVALID_SOCKET)
             {
                 ret = MULTICAST_boardcast_self(multicast_sk6, NET_INET_VERSION_6);
-                if (ret < 0)
+                if (!ret.has_value && !NET_need_try_again(ret.error))
                 {
-                    LOGGING_pwarn("IPv6 MULTICAST_boardcast_self", ret);
+                    LOGGING_pwarn("IPv6 MULTICAST_boardcast_self", ret.error);
                 }
             }
         }
@@ -4900,13 +5013,12 @@ int main(int argc, char *argv[])
         if (dns_sk4 != NET_INVALID_SOCKET)
         {
             ret = FN_process_dns_query(dns_sk4, &record_inet4_map, &record_inet6_map);
-            if (NET_need_try_again(ret))
+            if (!ret.has_value)
             {
-                goto DNS_CONTINUE4;
-            }
-            if (ret < 0)
-            {
-                LOGGING_pwarn("IPv4 FN_recv_dns_query", ret);
+                if (!NET_need_try_again(ret.error))
+                {
+                    LOGGING_pwarn("IPv4 FN_recv_dns_query", ret.error);
+                }
                 goto DNS_CONTINUE4;
             }
         }
@@ -4915,13 +5027,12 @@ int main(int argc, char *argv[])
         if (dns_sk6 != NET_INVALID_SOCKET)
         {
             ret = FN_process_dns_query(dns_sk6, &record_inet4_map, &record_inet6_map);
-            if (NET_need_try_again(ret))
+            if (!ret.has_value)
             {
-                goto DNS_CONTINUE6;
-            }
-            if (ret < 0)
-            {
-                LOGGING_pwarn("IPv6 FN_recv_dns_query", ret);
+                if (!NET_need_try_again(ret.error))
+                {
+                    LOGGING_pwarn("IPv6 FN_recv_dns_query", ret.error);
+                }
                 goto DNS_CONTINUE6;
             }
         }
@@ -4935,22 +5046,22 @@ int main(int argc, char *argv[])
     if (multicast_sk4 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_offline_self(multicast_sk4, NET_INET_VERSION_4);
-        if (ret < 0)
+        if (!ret.has_value && !NET_need_try_again(ret.error))
         {
-            LOGGING_pwarn("IPv4 MULTICAST_offline_self", ret);
+            LOGGING_pwarn("IPv4 MULTICAST_offline_self", ret.error);
         }
     }
     if (multicast_sk6 != NET_INVALID_SOCKET)
     {
         ret = MULTICAST_offline_self(multicast_sk6, NET_INET_VERSION_6);
-        if (ret < 0)
+        if (!ret.has_value && !NET_need_try_again(ret.error))
         {
-            LOGGING_pwarn("IPv6 MULTICAST_offline_self", ret);
+            LOGGING_pwarn("IPv6 MULTICAST_offline_self", ret.error);
         }
     }
 
     LOGGING_info("Fast Networking main loop stopped.");
-    ret = EXIT_SUCCESS;
+    proc_ret = EXIT_SUCCESS;
 
 EXIT:
     NET_closesocket(multicast_sk4);
@@ -4963,5 +5074,10 @@ EXIT:
     MULTICAST_deinitialize();
     NET_deinitialize();
 
-    return -ret;
+    return proc_ret;
+}
+
+int main(int argc, char **argv)
+{
+    return FN_main(argc, argv);
 }
