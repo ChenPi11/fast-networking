@@ -350,7 +350,7 @@ RESULT_void RESULT_error_void_struct(struct EXC_ErrorCode error)
 }
 
 /* Create a success result of type void. */
-RESULT_void RESULT_ok_void()
+RESULT_void RESULT_ok_void(void)
 {
     RESULT_void res;
     res.has_value = UTIL_TRUE;
@@ -475,7 +475,7 @@ uint64_t UTIL_get_current_time_ms()
 }
 #else
 /* Get current time in milliseconds. */
-uint64_t UTIL_get_current_time_ms()
+uint64_t UTIL_get_current_time_ms(void)
 {
     struct timespec ts;
 
@@ -1502,7 +1502,7 @@ static LOGGING_LogFormats g_LOGGING_format;
     } while (0)
 
 /* Initialize logging. */
-void LOGGING_initialize()
+void LOGGING_initialize(void)
 {
     LOGGING_set_level(LOG_LEVEL_DEBUG);
     LOGGING_set_format(LOG_LEVEL_DEBUG, "%2");
@@ -1581,7 +1581,7 @@ EXIT:
 }
 
 /* Check if the logfile supports color output. */
-UTIL_Bool LOGGING_logfile_supports_color()
+UTIL_Bool LOGGING_logfile_supports_color(void)
 {
     return isatty(fileno(stderr)) ? UTIL_TRUE : UTIL_FALSE;
 }
@@ -1761,13 +1761,13 @@ struct NET_InetAddr
 };
 
 /* Initialize the networking subsystem. */
-RESULT_void NET_initialize()
+RESULT_void NET_initialize(void)
 {
     return RESULT_ok_void();
 }
 
 /* Deinitialize the networking subsystem. */
-RESULT_void NET_deinitialize()
+RESULT_void NET_deinitialize(void)
 {
     return RESULT_ok_void();
 }
@@ -3568,7 +3568,7 @@ static struct CONFIG_ConfigEntry g_FN_config_entries[(size_t)OPT_MAX];
     } while (0)
 
 /* Deinitialize configuration entries and free allocated memory. */
-void CONFIG_deinitialize()
+void CONFIG_deinitialize(void)
 {
     size_t i;
 
@@ -3580,7 +3580,7 @@ void CONFIG_deinitialize()
 }
 
 /* Initialize configuration entries with default values. */
-RESULT_void CONFIG_initialize()
+RESULT_void CONFIG_initialize(void)
 {
     struct EXC_ErrorCode err;
 
@@ -3901,7 +3901,7 @@ EXIT:
 }
 
 /* Load configuration entries from global, user, and environment variable files. */
-void CONFIG_load()
+void CONFIG_load(void)
 {
     if (UTIL_is_file(CONFIG_GLOBAL_CONFIG_FILE_UNIX))
     {
@@ -3965,7 +3965,7 @@ typedef struct CONFIG_ConfigEntry *CONFIG_ConfigEntryIter;
 #pragma region main
 #endif
 
-static RESULT_void FN__apply_logging_settings()
+static RESULT_void FN__apply_logging_settings(void)
 {
     enum LOGGING_LogLevel log_level;
     RESULT_uint64_t log_level_res;
@@ -4021,7 +4021,7 @@ static RESULT_void FN__apply_logging_settings()
 #endif
 
 /* Initialize Fast Networking module. */
-RESULT_void FN_initialize()
+RESULT_void FN_initialize(void)
 {
     RESULT_void ret;
 
@@ -4530,7 +4530,7 @@ EXIT:
 }
 
 /* Print version information. */
-void FN_print_version()
+void FN_print_version(void)
 {
     printf("Fast Networking %s\n", FN_VERSION_STRING);
     printf("%s\n", FN_COPYRIGHT_STRING);
@@ -4553,7 +4553,7 @@ void FN_print_help(UTIL_StringBuffer prog_name)
 }
 
 /* Checking for runtime is little endian. */
-UTIL_Bool FN_is_little_endian()
+UTIL_Bool FN_is_little_endian(void)
 {
     uint16_t test = 0x1;
     uint8_t *p = (uint8_t *)&test;
@@ -4561,7 +4561,7 @@ UTIL_Bool FN_is_little_endian()
 }
 
 /* Print build infomation. */
-void FN_print_build_info()
+void FN_print_build_info(void)
 {
     printf("Build Info:\n");
 
@@ -4643,7 +4643,7 @@ void FN_print_build_info()
 }
 
 /* Print all configuration entries. */
-void FN_iter_config_entries()
+void FN_iter_config_entries(void)
 {
     CONFIG_ConfigEntryIter iter;
 
@@ -4735,7 +4735,7 @@ int FN_parse_arguments(int argc, UTIL_StringBuffer argv[])
         }
         else
         {
-            LOGGING_error("Unknown argument: %s", argv[opt]);
+            LOGGING_error("Unknown argument: %s", (const char *)argv[opt]);
             return EXIT_FAILURE;
         }
     }
