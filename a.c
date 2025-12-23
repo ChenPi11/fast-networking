@@ -1420,10 +1420,16 @@ void MAP_clear(struct MAP_Map *map)
     {
         struct MAP_Node *node;
 
+        if (map->buckets == NULL)
+            continue;
+
         node = map->buckets[i];
         while (node)
         {
             struct MAP_Node *next;
+
+            if (node == NULL)
+                continue;
 
             next = node->next;
 
@@ -1446,7 +1452,8 @@ void MAP_free(struct MAP_Map *map)
         return;
 
     MAP_clear(map);
-    free(map->buckets);
+    if (map->buckets)
+        free(map->buckets);
 }
 
 #if 0
@@ -4790,11 +4797,10 @@ int FN_main(int argc, UTIL_StringBuffer argv[])
     dns_sk4 = NET_INVALID_SOCKET;
     dns_sk6 = NET_INVALID_SOCKET;
     g_FN_mainthread_running = UTIL_TRUE;
+    memset(&record_inet4_map, 0, sizeof(struct MAP_Map));
+    memset(&record_inet6_map, 0, sizeof(struct MAP_Map));
 
     /* Create DNS server sockets. */
-    NET_async_socket(NET_INET_VERSION_6);
-    NET_async_socket(NET_INET_VERSION_6);
-    NET_async_socket(NET_INET_VERSION_6);
     sk_res = NET_async_socket(NET_INET_VERSION_4);
     if (!sk_res.has_value)
     {
