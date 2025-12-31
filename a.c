@@ -69,7 +69,7 @@
 
 #if HAS_WINDOWS
 #include <Windows.h>
-#include <winsock.h>
+#include <io.h>
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -148,6 +148,20 @@ typedef char *UTIL_StringBuffer;
 /* Maximum value for UTIL_SignedSize. */
 #define UTIL_SSIZE_MAX UTIL_MAX_SIGNED_VALUE(sizeof(UTIL_SignedSize))
 
+/* Although this program is only single-thread. */
+#if (defined(__cplusplus) && __cplusplus >= 201103L) || (defined(_MSVC_LANG) && _MSVC_LANG >= 201103L)
+#define UTIL_THREAD_LOCAL thread_local
+#elif defined(_ISOC11_SOURCE) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L)
+#define UTIL_THREAD_LOCAL _Thread_local
+#elif defined(__GNUC__) || defined(__clang__) || defined(__ICCARM__) || defined(__TINYC__) ||                          \
+    defined(__INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER) || defined(__ICC) || defined(__ICPC)
+#define UTIL_THREAD_LOCAL __thread
+#elif defined(_MSC_VER)
+#define UTIL_THREAD_LOCAL __declspec(thread)
+#else
+#define UTIL_THREAD_LOCAL
+#endif
+
 #if 0
 #pragma endregion
 
@@ -155,7 +169,7 @@ typedef char *UTIL_StringBuffer;
 #endif
 
 /* Exception error categories. */
-enum EXC_ErrrorCategory
+enum EXC_ErrorCategory
 {
     /* Libc error category. */
     EXC_CATEGORY_LIBC = 0,
@@ -180,12 +194,12 @@ struct EXC_ErrorCode
     /* Error code. */
     int code;
     /* Error category. */
-    enum EXC_ErrrorCategory category;
+    enum EXC_ErrorCategory category;
 };
 
 #if HAS_WINDOWS
 /* Get last exception code with CATEGORY. */
-struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
+struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrorCategory category)
 {
     struct EXC_ErrorCode error;
 
@@ -211,7 +225,7 @@ struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
 }
 #else
 /* Get last exception code with CATEGORY. */
-struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
+struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrorCategory category)
 {
     struct EXC_ErrorCode error;
 
@@ -224,7 +238,7 @@ struct EXC_ErrorCode EXC_get_last_error(enum EXC_ErrrorCategory category)
 
 #if HAS_WINDOWS
 /* Clear last exception code with CATEGORY. */
-void EXC_clear_last_error(enum EXC_ErrrorCategory category)
+void EXC_clear_last_error(enum EXC_ErrorCategory category)
 {
     switch (category)
     {
@@ -250,6 +264,153 @@ void EXC_clear_last_error(enum EXC_ErrrorCategory category)
     } while (0)
 #endif
 
+/* Get FastNetworking error string of CODE. */
+UTIL_ConstString EXC_fn_error_string(int code)
+{
+    switch (code)
+    {
+    case EFN_MAX_CAPACITY_EXCEEDED:
+        return "Max capacity exceeded.";
+    case EFN_TRY_AGAIN:
+        return "Try again.";
+    case EFN_COMPRESSION_PTR_UNSUPPORTED:
+        return "DNS compression pointer unsupported.";
+    case EFN_INVALID_HOSTNAME:
+        return "Invalid hostname.";
+    case EFN_NO_MULTICAST_JOINED:
+        return "No interfaces joined the multicast group.";
+    case EFN_JOIN_REFUSED:
+        return "Join request refused.";
+    default:
+        return "Unknown error.";
+    }
+}
+
+#if HAS_WINDOWS
+/* Notice: return is system-allocated. Use LocalFree. */
+static LPSTR EXC__not_found_errno_hexstr(LPSTR error_code_str, LPSTR module_path)
+{
+    LPSTR not_found_msg_buffer;
+    DWORD not_found_msg_buffer_length;
+    LPSTR final_msg_buffer;
+    DWORD *args[2]; /* Windows XP use DWORD_PTR, but we need support Windows NT. */
+    DWORD conv_ret;
+
+    not_found_msg_buffer = NULL;
+    not_found_msg_buffer_length = 0;
+    final_msg_buffer = NULL;
+    conv_ret = 0;
+    memset(args, NULL, sizeof(args));
+
+    /* Step 1: Get the "Message id %1 not found in %2" message to include in our output. */
+    not_found_msg_buffer_length = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+        ERROR_MR_MID_NOT_FOUND, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)(&not_found_msg_buffer), 0, NULL);
+    if (not_found_msg_buffer_length == 0)
+    {
+        return NULL;
+    }
+
+    /* Step 2: Format our final message including the not found message. */
+    args[0] = (DWORD *)error_code_str;
+    args[1] = (DWORD *)module_path;
+    conv_ret =
+        FormatMessageA(FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ARGUMENT_ARRAY | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                       not_found_msg_buffer, 0, 0, (LPSTR)(&final_msg_buffer), 0, (va_list *)(args));
+    if (conv_ret == 0)
+    {
+        goto FAIL;
+    }
+
+    /* Step 3: Clean up and return the final message. */
+    LocalFree((HLOCAL)not_found_msg_buffer);
+    return final_msg_buffer;
+FAIL:
+    if (not_found_msg_buffer != NULL)
+        LocalFree((HLOCAL)not_found_msg_buffer);
+    if (final_msg_buffer != NULL && conv_ret == 0)
+        LocalFree((HLOCAL)final_msg_buffer);
+    return NULL;
+}
+
+static void EXC__ev_tohex(unsigned int ev, char *buf)
+{
+    /* buf is guaranteed non-NULL and large enough */
+    static const char hexdig[] = "0123456789ABCDEF";
+
+    char tmp[2 * sizeof(unsigned int)];
+    int i;
+    int j;
+    int len;
+
+    /* Special-case zero. */
+    if (ev == 0)
+    {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+
+    /* Convert into a temporary buffer from the end, then copy out. */
+    i = (int)sizeof(tmp);
+    while (ev != 0)
+    {
+        tmp[--i] = hexdig[ev & 0xF];
+        ev >>= 4;
+    }
+
+    len = (int)sizeof(tmp) - i;
+    for (j = 0; j < len; ++j)
+    {
+        buf[j] = tmp[i + j];
+    }
+    buf[len] = '\0';
+}
+
+static LPSTR EXC__not_found_errno(int ev)
+{
+    char hexev[2 * sizeof(unsigned int)];
+    char module_path[MAX_PATH];
+
+    memset(module_path, 0, sizeof(module_path));
+    EXC__ev_tohex(ev, hexev);
+
+    (void)GetModuleFileNameA(NULL, module_path, MAX_PATH);
+
+    return EXC__not_found_errno_hexstr(hexev, module_path);
+}
+
+UTIL_THREAD_LOCAL static LPSTR g_win_msg_buffer = NULL;
+
+/* Get error message for ERROR. */
+UTIL_ConstString EXC__sys_strerror(int ev)
+{
+    DWORD msg_buffer_length;
+
+    /* Free previous buffer if any. */
+    if (g_win_msg_buffer != NULL)
+    {
+        LocalFree((HLOCAL)g_win_msg_buffer);
+        g_win_msg_buffer = NULL;
+    }
+
+    /* Try to get the error message from the system. */
+    msg_buffer_length =
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       NULL, ev, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)(&g_win_msg_buffer), 0, NULL);
+    if (msg_buffer_length == 0)
+    {
+        /* If not found, get the "not found" message. */
+        g_win_msg_buffer = EXC__not_found_errno(ev);
+        if (g_win_msg_buffer == NULL)
+        {
+            return "Unknown error";
+        }
+    }
+
+    return (UTIL_ConstString)g_win_msg_buffer;
+}
+
 /* Get error message for ERROR. */
 UTIL_ConstString EXC_strerror(struct EXC_ErrorCode error)
 {
@@ -262,27 +423,46 @@ UTIL_ConstString EXC_strerror(struct EXC_ErrorCode error)
     case EXC_CATEGORY_NET:
         return strerror(error.code);
     case EXC_CATEGORY_FN:
-        switch (error.code)
-        {
-        case EFN_MAX_CAPACITY_EXCEEDED:
-            return "Max capacity exceeded";
-        case EFN_TRY_AGAIN:
-            return "Try again";
-        case EFN_COMPRESSION_PTR_UNSUPPORTED:
-            return "DNS compression pointer unsupported";
-        case EFN_INVALID_HOSTNAME:
-            return "Invalid hostname";
-        case EFN_NO_MULTICAST_JOINED:
-            return "No interfaces joined the multicast group";
-        case EFN_JOIN_REFUSED:
-            return "Join request refused";
-        default:
-            return "Unknown error";
-        }
+        return EXC_fn_error_string(error.code);
     default:
         return "Unknown error category";
     }
 }
+
+/* Deinitialize exception system. */
+void EXC_deinitialize()
+{
+    /* Free thread-local message buffer if any. */
+    if (g_win_msg_buffer != NULL)
+    {
+        LocalFree((HLOCAL)g_win_msg_buffer);
+        g_win_msg_buffer = NULL;
+    }
+}
+
+#else
+/* Get error message for ERROR. */
+UTIL_ConstString EXC_strerror(struct EXC_ErrorCode error)
+{
+    switch (error.category)
+    {
+    case EXC_CATEGORY_LIBC:
+        return strerror(error.code);
+    case EXC_CATEGORY_SYS:
+        return strerror(error.code);
+    case EXC_CATEGORY_NET:
+        return strerror(error.code);
+    case EXC_CATEGORY_FN:
+        return EXC_fn_error_string(error.code);
+    default:
+        return "Unknown error category";
+    }
+}
+
+void EXC_deinitialize()
+{
+}
+#endif
 
 #if 0
 #pragma endregion
@@ -300,7 +480,7 @@ UTIL_ConstString EXC_strerror(struct EXC_ErrorCode error)
             ResultType value;                                                                                          \
         } result;                                                                                                      \
     } RESULT_##ResultType;                                                                                             \
-    RESULT_##ResultType RESULT_error_##ResultType(int code, enum EXC_ErrrorCategory category)                          \
+    RESULT_##ResultType RESULT_error_##ResultType(int code, enum EXC_ErrorCategory category)                          \
     {                                                                                                                  \
         RESULT_##ResultType res;                                                                                       \
         res.has_value = UTIL_FALSE;                                                                                    \
@@ -331,7 +511,7 @@ typedef struct RESULT_Tag_void
 } RESULT_void;
 
 /* Create an error result of type void with code and category. */
-RESULT_void RESULT_error_void(int code, enum EXC_ErrrorCategory category)
+RESULT_void RESULT_error_void(int code, enum EXC_ErrorCategory category)
 {
     RESULT_void res;
     res.has_value = UTIL_FALSE;
@@ -358,7 +538,7 @@ RESULT_void RESULT_ok_void(void)
 }
 
 /* Return a void result with error code from last exception. */
-RESULT_void RESULT_ERRNO_void(enum EXC_ErrrorCategory category)
+RESULT_void RESULT_ERRNO_void(enum EXC_ErrorCategory category)
 {
     return RESULT_error_void_struct(EXC_get_last_error(category));
 }
@@ -1587,11 +1767,25 @@ EXIT:
     free(buffer2);
 }
 
+#if HAS_WINDOWS
+/* Check if the logfile supports color output. */
+UTIL_Bool LOGGING_logfile_supports_color(void)
+{
+    const HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+
+    DWORD mode;
+
+    if (h == INVALID_HANDLE_VALUE)
+        return UTIL_FALSE;
+    return GetConsoleMode(h, &mode) ? UTIL_TRUE : UTIL_FALSE;
+}
+#else
 /* Check if the logfile supports color output. */
 UTIL_Bool LOGGING_logfile_supports_color(void)
 {
     return isatty(fileno(stderr)) ? UTIL_TRUE : UTIL_FALSE;
 }
+#endif
 
 /* Log a message with level LEVEL and format FMT. */
 void LOGGING_log(enum LOGGING_LogLevel level, UTIL_ConstString fmt, ...)
@@ -5079,6 +5273,7 @@ EXIT:
     CONFIG_deinitialize();
     MULTICAST_deinitialize();
     NET_deinitialize();
+    EXC_deinitialize();
 
     return proc_ret;
 }
